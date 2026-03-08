@@ -91,8 +91,8 @@ operational mission data are outside the scope of this specification.
 | Contract crate    | A Rust crate that defines traits and data types but contains no implementation |
 | DoF               | Degrees of Freedom                                                         |
 | ECS               | Entity Component System — Bevy's data-oriented architecture                |
-| Composition preset | A named, reusable scenario fragment that selects a specific set of layer 1 partition implementations within a domain. Applicable to any fractally partitioned domain (physics, visualization, GN&C), not only physics. See SIM-SYS-025 |
-| Fidelity tier     | A composition preset within the physics domain that selects sub-model implementations by complexity level (e.g., `"low"`, `"mid"`, `"high"`). Not a distinct system primitive — fidelity tiers are an emergent application of the fractal partition pattern's compositor mechanism |
+| Composition fragment | A configuration block — inline or named — that selects partition implementations at a given scope within the fractal structure. A session is a composition fragment at layer 0. A scenario is a composition fragment at layer 1. A vehicle section, a physics preset, and a visualization preset are composition fragments at progressively narrower scopes. All composition fragments share the same override and inheritance semantics (see SIM-SYS-024, SIM-SYS-025) |
+| Fidelity tier     | A named composition fragment within the physics domain that selects sub-model implementations by complexity level (e.g., `"low"`, `"mid"`, `"high"`). Not a distinct system primitive — fidelity tiers are named composition fragments expressed using the same mechanism available to every partition |
 | GN&C              | Guidance, Navigation, and Control                                          |
 | IC                | Initial Conditions                                                         |
 | INCOSE            | International Council on Systems Engineering                               |
@@ -103,7 +103,8 @@ operational mission data are outside the scope of this specification.
 | NED               | North-East-Down coordinate frame                                           |
 | Partition         | A functional subdivision of the system at a given layer. At layer 0, the four top-level partitions (physics, GN&C, visualization, UI). At layer 1, sub-components within a partition (e.g., atmosphere model, navigation estimator). Each partition is independently replaceable provided it conforms to its layer's interface contracts |
 | Plugin            | A Bevy `Plugin` implementor, or a dynamically loaded shared library        |
-| Scenario          | A TOML file fully describing a simulation run                              |
+| Scenario          | A layer 1 composition fragment describing mission-level configuration: vehicle definitions, physics sub-model selections, environment models, events, and initial conditions. A session composes one or more scenarios |
+| Session           | The layer 0 composition fragment describing a simulation run: transport mode, timing parameters, active partitions, and which scenarios to compose. A session is the top-level entry point for the compositor |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
 | VehicleTypeId     | A stable string identifier for a vehicle design (e.g., `"cessna172"`)     |
 | WGS84             | World Geodetic System 1984 — standard geodetic reference frame             |
@@ -188,24 +189,32 @@ of truth for interface evolution and versioning.
 ### SIM-SYS-004 — Fractal Partition Pattern
 
 **Statement:** The system shall apply the **fractal partition pattern** at every level
-of its decomposition. At layer 0 (system level), the four top-level partitions use
-contract/implementation/compositor structure with shared interface types in `sim-core`.
-At layer 1 (partition level), the internal structure of each partition shall apply the
-same contract/implementation/compositor pattern, such that sub-components within a
-partition (e.g., aerodynamic model, atmosphere model, navigation estimator) are each
-independently replaceable via trait objects without modifying their siblings. The
-**layer and partition uniformity principle** shall hold: the same structural
-primitives — contracts, events (see SIM-SYS-035), configuration, and composition — shall
-be identical in kind at every layer.
+of its decomposition, in both runtime architecture and specification structure. At
+layer 0 (system level), the four top-level partitions use contract/implementation/
+compositor structure with shared interface types in `sim-core`. At layer 1 (partition
+level), the internal structure of each partition shall apply the same contract/
+implementation/compositor pattern, such that sub-components within a partition (e.g.,
+aerodynamic model, atmosphere model, navigation estimator) are each independently
+replaceable via trait objects without modifying their siblings. The **layer and partition
+uniformity principle** shall hold: the same structural primitives — contracts, events
+(see SIM-SYS-035), configuration (see SIM-SYS-023), composition, and
+specification (see SIM-SYS-033) — shall be identical in kind at every layer.
 
 **Rationale:** The fractal partition pattern ensures that the modularity, event handling,
-and composition mechanisms proven at the system level are available in the same form
-within each partition. Like a fractal, zooming into any partition reveals the same
-contract/compositor/event structure as the system as a whole. This maximizes the surface
-area of independent replaceability, allows composition to be adjusted at the sub-model
-level (including fidelity selection via composition presets), and allows instructors to
-assign isolated sub-components to student teams — all
-using the same constructs they encounter at the system level.
+composition mechanisms, and specification structure proven at the system level are
+available in the same form within each partition. Like a fractal, zooming into any
+partition reveals the same contract/compositor/event/specification structure as the
+system as a whole — and zooming out, universe itself is an independently replaceable
+partition within a larger system (see SIM-SYS-030). A laboratory invoking universe as
+one stage in a pre-process/simulate/post-process pipeline treats universe as a partition
+within its own layer 0; the same contracts and interfaces that make universe's internal
+partitions swappable make universe itself swappable in that outer context. This
+maximizes the surface area of independent replaceability at every scale, allows
+composition to be adjusted at the sub-model level (including fidelity selection via
+composition presets), and allows instructors to assign isolated sub-components to student
+teams — all using the same constructs they encounter at the system level. Applying the
+pattern to specification structure ensures that each layer's spec nucleates the next
+layer's specs, propagating traceability and structural discipline to arbitrary depth.
 
 **Verification Expectations:**
 - Pass: Within the physics partition, substituting the atmosphere sub-model with an
@@ -218,8 +227,14 @@ using the same constructs they encounter at the system level.
   and trigger types as events defined at layer 0 (system level).
 - Fail: A sub-model within a partition is instantiated by name (e.g., via `match` on a
   string) in more than one location, indicating the compositor pattern is not applied.
+- Pass: Each partition's specification identifies its own sub-partitions and uses the
+  same specification structure (statement, rationale, verification expectations,
+  traceability) as this document.
 - Fail: A partition implements domain-specific mechanisms (events, composition,
   configuration) using constructs that differ from those defined at the system level.
+- Fail: A partition's specification defines requirements without identifying
+  independently replaceable sub-partitions or without using the same structural
+  primitives as this document.
 
 ---
 
@@ -693,85 +708,132 @@ UI codebase.
 
 ---
 
-### SIM-SYS-023 — TOML Scenario File
+### SIM-SYS-023 — TOML Composition Fragments
 
-**Statement:** The system shall accept a TOML file as its primary runtime configuration
-interface. A scenario file shall fully specify: simulation parameters (timestep, bus
-mode), environment model list and per-model parameters, per-vehicle configuration
-(manifest path, composition preset or inline sub-model selection, GN&C plugin path,
-initial conditions), active
-visualization plugins, and active UI panels.
+**Statement:** The system shall use TOML files as its primary runtime configuration
+interface. Each file is a composition fragment at a specific scope within the fractal
+structure. A layer 0 fragment (session) specifies simulation parameters (timestep,
+transport mode) and references one or more layer 1 fragments (scenarios). A scenario
+fragment specifies mission content: vehicle definitions, physics sub-model selections,
+environment models, events, initial conditions, active visualization plugins, and active
+UI panels. Composition fragments at narrower scopes (vehicle definitions, physics
+presets, visualization presets) follow the same structure. An outer-layer fragment may
+inline or override any field that would otherwise be defined by an inner-layer fragment
+it composes; this allows a session fragment to fully define scenario content inline
+without referencing separate scenario files, or to override individual fields of a
+referenced scenario. The system shall accept a session fragment as its entry point.
+When no session fragment is specified, `sim-app` shall load a default session. When a
+path to a session fragment is provided as a command-line argument, `sim-app` shall use
+it instead of the default.
 
 **Rationale:** A human-readable, file-based configuration surface separates operational
-intent from implementation, allows scenarios to be version-controlled alongside code,
-and provides a portable artifact that students and laboratories can exchange without
-access to simulator source code.
+intent from implementation. Structuring configuration as composition fragments at every
+layer — rather than a single monolithic file — mirrors the fractal partition pattern:
+the same TOML structure, override semantics, and inheritance rules apply at every scope.
+Sessions, scenarios, vehicle definitions, and sub-model presets are all portable
+artifacts that can be independently version-controlled, exchanged between students and
+laboratories, and reused across different compositions without access to simulator
+source code.
 
 **Verification Expectations:**
-- Pass: The system initializes and executes a complete simulation run from a TOML file
-  without additional command-line arguments beyond the file path.
+- Pass: `sim-app` launched with no arguments loads the default session and executes a
+  complete simulation run.
+- Pass: `sim-app path/to/custom-session.toml` loads the specified session fragment
+  instead of the default and executes a complete simulation run.
+- Pass: A session fragment referencing a scenario fragment by path correctly composes
+  the scenario's vehicle definitions, environment models, and events into the session.
+- Pass: A session fragment that inlines all scenario content (vehicle definitions,
+  environment models, events, initial conditions) without referencing any external
+  scenario fragment executes a complete simulation run.
+- Pass: A session fragment that references a scenario fragment and overrides a single
+  field (e.g., a vehicle's initial altitude) produces a simulation that matches the
+  referenced scenario in all respects except the overridden field.
 - Pass: Two operators on different machines produce identical initial physics states
-  from the same scenario TOML (excluding non-deterministic transport effects).
+  from the same session and scenario fragments (excluding non-deterministic transport
+  effects).
 - Fail: Any simulation parameter that is documented as configurable requires a source
   code change or environment variable to override.
+- Fail: Configuration at any scope requires a format or structure distinct from the
+  TOML composition fragment format used at other scopes.
 
 ---
 
-### SIM-SYS-024 — Scenario Inheritance
+### SIM-SYS-024 — Composition Fragment Inheritance
 
-**Statement:** A scenario TOML file shall support an `extends` field whose value is a
-path to a base scenario file. Fields present in the inheriting file shall override the
-corresponding fields in the base. Fields absent from the inheriting file shall be
-inherited unchanged from the base.
+**Statement:** Any TOML composition fragment shall support an `extends` field whose
+value is a path to a base fragment of the same scope. Fields present in the inheriting
+fragment shall override the corresponding fields in the base. Fields absent from the
+inheriting fragment shall be inherited unchanged from the base. This mechanism shall be
+available at every scope: sessions, scenarios, vehicle definitions, and sub-model
+presets. Additionally, an outer-layer fragment shall be able to override fields defined
+by any inner-layer fragment it composes: a session may override scenario fields, a
+scenario may override vehicle or physics preset fields, and so on to arbitrary depth.
 
-**Rationale:** Composition preset variants and vehicle configuration variants of the
-same scenario are typically small diffs against a common base. Inheritance allows these
-variants to be expressed minimally, keeping them automatically synchronized with base
-scenario changes and reducing the maintenance burden of scenario libraries.
+**Rationale:** Variants of a composition fragment at any scope are typically small diffs
+against a common base — a scenario that differs only in wind model, a session that
+differs only in transport mode, a vehicle definition that differs only in initial
+conditions. Inheritance allows these variants to be expressed minimally, keeping them
+automatically synchronized with base fragment changes and reducing the maintenance
+burden of configuration libraries. Cross-layer overrides allow outer fragments to
+customize inner fragments without forking them: an instructor can distribute a standard
+scenario and have each session override only the parameters relevant to that session,
+or a single session file can fully define all content without separate fragment files.
+Consistent with the fractal partition pattern, the same inheritance and override
+mechanism applies at every layer and scope.
 
 **Verification Expectations:**
-- Pass: A scenario file containing only `extends = "base.toml"` and a single overridden
-  field produces a simulation that differs from the base scenario only in the overridden
-  field's effect.
-- Pass: Modifying a shared field in the base scenario is reflected in all inheriting
-  scenarios without modifying the inheriting files.
+- Pass: A scenario fragment containing only `extends = "base.toml"` and a single
+  overridden field produces a simulation that differs from the base scenario only in
+  the overridden field's effect.
+- Pass: A session fragment extending a base session inherits the base session's scenario
+  references and simulation parameters, overriding only specified fields.
+- Pass: A session fragment that references a scenario by name and overrides a physics
+  sub-model within that scenario produces a simulation where only the overridden
+  sub-model differs from the named scenario's defaults.
+- Pass: Modifying a shared field in a base fragment is reflected in all inheriting
+  fragments without modifying the inheriting files.
 - Fail: A circular `extends` chain (A extends B extends A) is silently accepted; the
   system shall detect and report it as a configuration error.
+- Fail: The `extends` mechanism is available only for scenario fragments; session or
+  vehicle definition fragments require a different override mechanism.
 
 ---
 
-### SIM-SYS-025 — Named Composition Presets
+### SIM-SYS-025 — Named Composition Fragments
 
-**Statement:** The scenario file shall support named composition presets resolvable to
-preset files in a configurable presets directory. Presets shall be applicable to any
-fractally partitioned domain — physics (e.g., `"low"`, `"mid"`, `"high"`),
-visualization, GN&C, or any other partition that composes layer 1 sub-components.
-Inline configuration tables shall be supported to override or replace individual
-sub-model selections within a named preset without defining an entirely new preset.
+**Statement:** Any composition fragment reference within a TOML file shall be
+expressible as either an inline table or a named reference resolvable to a fragment file
+in a configurable directory. Named fragments shall be applicable at any scope within the
+fractal structure — physics sub-model selections (e.g., `"low"`, `"mid"`, `"high"`),
+visualization plugin sets, GN&C configurations, vehicle definitions, or scenarios.
+Inline overrides shall be supported to modify individual fields within a named fragment
+without defining an entirely new fragment (via the inheritance mechanism of SIM-SYS-024).
 
-**Rationale:** Composition presets are a natural consequence of the fractal partition
-pattern: since every partition composes independently replaceable sub-components via
-the same compositor mechanism, a reusable named selection of those sub-components is
-useful at any layer and in any domain. Named presets give instructors a stable,
-communicable vocabulary (e.g., "run your controller at mid fidelity") while inline
-overrides allow individual sub-model substitution without defining an entirely new
-preset. Generalizing presets beyond physics ensures that the same composition mechanism
-serves visualization quality levels, GN&C estimator configurations, or any future
-domain without introducing a domain-specific preset system.
+**Rationale:** Named composition fragments are a natural consequence of the fractal
+partition pattern: since every scope composes independently replaceable sub-components
+via the same compositor mechanism, a reusable named selection of those sub-components is
+useful at every layer and in every domain. Named fragments give instructors a stable,
+communicable vocabulary (e.g., "run your controller against the mid scenario") while
+inline overrides allow individual field substitution without creating a new fragment.
+Because the naming and override mechanism is the same at every scope, there is no
+domain-specific preset system — physics presets, visualization presets, vehicle
+templates, and scenario variants are all composition fragments.
 
 **Verification Expectations:**
-- Pass: A vehicle configured with `preset = "mid"` produces the same behavior as a
-  vehicle configured with an inline table containing the fields defined in
-  `config/presets/physics/mid.toml`.
+- Pass: A vehicle referencing `physics = "mid"` produces the same behavior as a vehicle
+  with an inline table containing the fields defined in the corresponding named fragment
+  file.
 - Pass: An inline override of a single field (e.g., `wind = "dryden"`) in an otherwise
-  `"mid"` preset vehicle activates only that sub-model difference, leaving all other
-  sub-models selected by the preset unchanged.
-- Pass: A visualization preset (e.g., `[viz] preset = "minimal"`) selects a specific
+  `"mid"` physics fragment activates only that sub-model difference, leaving all other
+  sub-models selected by the fragment unchanged.
+- Pass: A visualization fragment (e.g., `[viz] preset = "minimal"`) selects a specific
   set of visualization plugins, and inline overrides add or remove individual plugins
-  without replacing the entire preset.
-- Fail: The system accepts an unrecognized preset name without reporting an error.
-- Fail: The preset mechanism is available only for physics; other partitions require
-  a different mechanism to achieve named sub-component selections.
+  without replacing the entire fragment.
+- Pass: A session referencing `scenario = "case-2"` resolves to the corresponding
+  named scenario fragment file and composes its contents into the session.
+- Fail: The system accepts an unrecognized fragment name without reporting an error.
+- Fail: The named fragment mechanism is available only at specific scopes; other scopes
+  require a different mechanism to achieve named sub-component selections.
 
 ---
 
@@ -869,25 +931,36 @@ stack in contexts where it is unnecessary.
 
 ### SIM-SYS-030 — Embedding Interface
 
-**Statement:** The `universe` library crate shall expose a `FlightSimPlugin`
-implementing the Bevy `Plugin` trait. Third-party Bevy applications shall be able to
-incorporate the full simulator by adding `FlightSimPlugin` to their `App` without
-depending on individual partition crates.
+**Statement:** The `universe` crate shall expose a library interface sufficient for
+use as a partition within a larger workflow. Universe shall not assume it owns the
+top-level process or entry point. The library interface shall not require callers to
+depend on universe's internal partition crates. Universe shall support being invoked
+after external pre-processing (e.g., configuration generation, scenario assembly) and
+shall produce outputs consumable by external post-processing (e.g., telemetry analysis,
+report generation) without requiring those stages to run within universe's process
+model.
 
-**Rationale:** Laboratories with existing Bevy-based applications (visualization
-pipelines, hardware interfaces, mission control displays) should be able to embed the
-simulator as a component of a larger system rather than treating it as a standalone
-executable.
+**Rationale:** The fractal partition pattern applies outward as well as inward: just as
+universe's internal partitions are independently replaceable within universe, universe
+itself shall be independently replaceable within a larger system. A laboratory's
+automation pipeline may generate composition fragments, invoke universe as one stage
+in a multi-stage workflow, and consume its outputs — treating universe as a partition
+within its own layer 0. The same replaceability guarantee universe provides to its own
+sub-partitions shall hold at this outer boundary: swapping universe for an alternative
+simulation engine requires no changes to the host program beyond the dependency and
+invocation.
 
 **Verification Expectations:**
-- Pass: A minimal third-party Bevy application that declares only `universe` as a
-  dependency and calls `app.add_plugins(FlightSimPlugin::from_toml(...))` compiles and
-  executes a simulation run.
-- Pass: The third-party application can add its own Bevy plugins alongside
-  `FlightSimPlugin` without conflict.
-- Fail: Embedding `FlightSimPlugin` requires the third-party application to also
-  declare `sim-core`, `sim-physics`, `sim-gnc`, `sim-viz`, or `sim-ui` as direct
-  dependencies.
+- Pass: Universe's library interface accepts a session fragment, executes the session,
+  and returns control to the caller without retaining ownership of the process lifecycle.
+- Pass: Universe's library interface is usable with only `universe` as a dependency;
+  internal partition crates (`sim-core`, `sim-physics`, `sim-gnc`, `sim-viz`, `sim-ui`)
+  are not required by callers.
+- Pass: Universe's library interface does not require callers to initialize
+  framework-specific infrastructure (e.g., an ECS world, a rendering context) that
+  universe manages internally.
+- Fail: Universe's library interface assumes it is the process entry point or prevents
+  the caller from performing work before or after the simulation session.
 
 ---
 
@@ -1313,9 +1386,9 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-020 | Bevy ECS Ownership                 | TF-SRS-003, TF-SRS-004    |
 | SIM-SYS-021 | UI Execution Control               | TF-SRS-004                |
 | SIM-SYS-022 | UI Extensibility                   | TF-SRS-004                |
-| SIM-SYS-023 | TOML Scenario File                 | TF-SRS-006                |
-| SIM-SYS-024 | Scenario Inheritance               | TF-SRS-006                |
-| SIM-SYS-025 | Named Composition Presets          | TF-SRS-001 through 006    |
+| SIM-SYS-023 | TOML Composition Fragments         | TF-SRS-006                |
+| SIM-SYS-024 | Composition Fragment Inheritance   | TF-SRS-006                |
+| SIM-SYS-025 | Named Composition Fragments        | TF-SRS-001 through 006    |
 | SIM-SYS-026 | Implementation Language            | TF-SRS-001 through 006    |
 | SIM-SYS-027 | Crate Publishability               | TF-SRS-006                |
 | SIM-SYS-028 | Independent GN&C ABI Versioning    | TF-SRS-002A               |

@@ -29,8 +29,9 @@
 12. [Configuration and Composition](#12-configuration-and-composition)
 13. [Distribution and Packaging](#13-distribution-and-packaging)
 14. [Telemetry](#14-telemetry)
-15. [Verification and Traceability](#15-verification-and-traceability)
-16. [Requirements Traceability Matrix](#16-requirements-traceability-matrix)
+15. [Events](#15-events)
+16. [Verification and Traceability](#16-verification-and-traceability)
+17. [Requirements Traceability Matrix](#17-requirements-traceability-matrix)
 
 ---
 
@@ -48,6 +49,13 @@ and vehicle visualization features against stable, well-defined interfaces.
 
 All child specifications shall include a traceability field referencing the SIM-SYS
 identifier(s) from this document that each child requirement satisfies.
+
+**Implementation neutrality:** The requirements in this document are intended to specify
+behavioral and structural contracts without prescribing implementation technology.
+References to specific tools, languages, and frameworks — including Rust, Bevy, TOML,
+Cargo, and `egui` — are illustrative examples of one viable realization and shall not be
+read as mandating those choices. An conforming implementation may substitute equivalent
+technologies provided all stated behavioral and structural requirements are satisfied.
 
 **Out of scope:** Specific aerodynamic databases, certified flight models, and
 operational mission data are outside the scope of this specification.
@@ -862,7 +870,149 @@ visualization stack ensures that recorded and live views are visually consistent
 
 ---
 
-## 15. Verification and Traceability
+## 15. Events
+
+---
+
+### SIM-SYS-035 — Event System Architecture
+
+**Statement:** The system shall provide a unified event system in which discrete events
+can be defined, armed, triggered, and handled at both the system level (layer 0) and the
+partition level (layer 1). The event model shall be structurally recursive: each partition
+(physics, GN&C, visualization, environment) shall define, arm, and handle events using
+the same primitives and interfaces available at the system level.
+
+**Rationale:** Mission timelines, failure injection, scenario scripting, and conditional
+logic all require a mechanism for scheduling and reacting to discrete occurrences during
+a simulation run. A recursive event model ensures that partition-specific events
+(e.g., a sensor failure in the plant model, a mode transition in GN&C, a camera cut in
+visualization) are expressed and managed with the same constructs as system-level events
+(e.g., simulation start, scenario phase transitions), avoiding redundant or incompatible
+mechanisms across partitions.
+
+**Verification Expectations:**
+- Pass: A system-level event and a partition-level event defined in the same scenario
+  both trigger at their specified conditions during a simulation run.
+- Pass: A partition-level event defined within the GN&C partition uses the same event
+  definition schema and trigger types as a system-level event defined outside any
+  partition scope.
+- Fail: A partition implements its own ad-hoc event mechanism that does not conform to
+  the system event interface defined in `sim-core`.
+- Fail: Events can only be defined at the system level; partition-scoped events are not
+  supported.
+
+---
+
+### SIM-SYS-036 — Time-triggered Events
+
+**Statement:** The event system shall support events triggered at a specified time. At
+layer 0 (system level), time-triggered events shall reference wall-clock time elapsed
+since simulation start. At layer 1 (partition and scenario level), time-triggered events
+shall reference mission scenario time as defined by the simulation clock.
+
+**Rationale:** Wall-clock triggers at layer 0 support infrastructure concerns such as
+telemetry snapshots, periodic health checks, and real-time synchronization boundaries
+that are independent of simulation time scaling. Scenario-time triggers at layer 1
+support mission timeline events (e.g., "ignite second stage at T+120s") that must track
+the simulated clock, including during time-scaled or paused execution.
+
+**Verification Expectations:**
+- Pass: A layer 0 event configured to trigger at wall-clock T+5s fires at approximately
+  5 seconds of real elapsed time, regardless of whether the simulation is running at 0.5x
+  or 2x real-time speed.
+- Pass: A layer 1 event configured to trigger at scenario time T+60s fires when the
+  simulation clock reaches 60 seconds, regardless of wall-clock elapsed time.
+- Pass: A layer 1 time-triggered event does not advance while the simulation is paused.
+- Fail: A scenario-time event fires based on wall-clock time, causing it to trigger at
+  the wrong mission phase when time scaling is active.
+
+---
+
+### SIM-SYS-037 — Condition-triggered Events
+
+**Statement:** The event system shall support events triggered by logical conditions
+evaluated against observable signals. A condition shall be expressible as a boolean
+predicate over one or more named signals (e.g., `altitude_msl < 100.0`,
+`mach > 1.0 && dynamic_pressure > 500.0`). The set of observable signals shall include
+any value published on the simulation bus or exposed as a named field within a
+partition's state.
+
+**Rationale:** Many mission events are defined not by clock time but by physical
+conditions: staging at a target altitude, deploying landing gear below a threshold
+airspeed, or injecting a fault when a sensor reading enters a specific range. Condition
+triggers allow scenario authors to express event logic declaratively without embedding
+procedural checks in partition source code.
+
+**Verification Expectations:**
+- Pass: An event conditioned on `altitude_msl < 500.0` triggers on the first tick in
+  which the monitored vehicle's altitude falls below 500 meters, and does not trigger
+  while altitude remains above 500 meters.
+- Pass: A compound condition using logical AND over two signals triggers only when both
+  sub-conditions are simultaneously satisfied.
+- Pass: Condition predicates reference signals by name as published on the bus or defined
+  in partition state, without requiring the event author to specify memory addresses or
+  internal data paths.
+- Fail: Condition-triggered events can only monitor system-level signals; partition-
+  internal state is not observable by the event system.
+
+---
+
+### SIM-SYS-038 — Partition-scoped Event Arming
+
+**Statement:** Each partition shall be capable of defining and arming events scoped to
+its own domain. Partition-scoped events shall be evaluated against that partition's
+internal signals and shall invoke handlers within the partition's execution context. The
+mechanism for defining and arming events shall be uniform across all partitions: physics,
+GN&C, visualization, and environment.
+
+**Rationale:** Partitions contain domain-specific state that may not be published on the
+inter-partition bus but is meaningful for triggering domain-specific behavior. A GN&C
+partition may arm an event on an internal estimator convergence metric; a plant model may
+arm an event on a structural load threshold; a visualization partition may arm a camera
+transition on proximity to a waypoint. Requiring all such events to be defined at the
+system level would violate partition encapsulation and create coupling between the event
+configuration and partition internals.
+
+**Verification Expectations:**
+- Pass: A GN&C partition arms an event on an internal signal not published to the bus,
+  and the event triggers correctly when the condition is met during GN&C execution.
+- Pass: A physics partition and a visualization partition each arm independent events
+  using the same event definition schema, and both trigger correctly without interference.
+- Pass: A partition-scoped event is defined in the partition's section of the scenario
+  TOML and does not require modification to any other partition's configuration.
+- Fail: Arming an event within a partition requires modifying `sim-core` or the system-
+  level event dispatcher source code.
+
+---
+
+### SIM-SYS-039 — Event Definition in Scenario Configuration
+
+**Statement:** Events shall be declaratively defined in the scenario TOML file. System-
+level events shall be defined in a top-level `[[events]]` array. Partition-scoped events
+shall be defined within the corresponding partition's configuration section (e.g.,
+`[[physics.events]]`, `[[gnc.events]]`, `[[viz.events]]`). Each event entry shall specify
+a trigger (time or condition), an action identifier, and optional parameters.
+
+**Rationale:** Declarative event definition in the scenario file keeps mission timelines
+version-controlled, portable, and inspectable alongside other scenario configuration. It
+avoids hard-coding event logic in partition source code and allows instructors to modify
+mission event sequences without recompilation.
+
+**Verification Expectations:**
+- Pass: A scenario TOML containing a `[[physics.events]]` entry with a time trigger and
+  an action identifier causes the specified action to execute in the physics partition at
+  the specified scenario time.
+- Pass: A scenario TOML containing both `[[events]]` (system-level) and
+  `[[gnc.events]]` (partition-level) entries executes both event categories correctly in
+  the same run.
+- Pass: Modifying the trigger time or condition of an event requires only a change to the
+  scenario TOML; no source code modification is needed.
+- Fail: Events can only be defined programmatically in Rust source; no scenario-file
+  representation exists.
+
+---
+
+## 16. Verification and Traceability
 
 ---
 
@@ -911,7 +1061,7 @@ reviews and to identify which tests must be updated when a requirement changes.
 
 ---
 
-## 16. Requirements Traceability Matrix
+## 17. Requirements Traceability Matrix
 
 | ID          | Title                              | Allocated To              |
 |-------------|------------------------------------|---------------------------|
@@ -949,3 +1099,8 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-032 | Telemetry Playback                 | TF-SRS-003, TF-SRS-004    |
 | SIM-SYS-033 | Partition-level Specifications     | TF-SRS-001 through 006    |
 | SIM-SYS-034 | Test Coverage of Requirements      | TF-SRS-001 through 006    |
+| SIM-SYS-035 | Event System Architecture          | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-036 | Time-triggered Events              | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-037 | Condition-triggered Events         | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-038 | Partition-scoped Event Arming      | TF-SRS-001 through 004    |
+| SIM-SYS-039 | Event Definition in Scenario Config| TF-SRS-006                |

@@ -89,6 +89,7 @@ operational mission data are outside the scope of this specification.
 | ABI               | Application Binary Interface — the binary-level contract for a shared library |
 | Compositor        | A component that selects and assembles implementations at startup          |
 | Contract crate    | A Rust crate that defines traits and data types but contains no implementation |
+| Diátaxis          | A documentation framework organizing content into four quadrants by user need: tutorials (learning-oriented), how-to guides (task-oriented), reference (information-oriented), and explanation (understanding-oriented). See SIM-SYS-033 |
 | DoF               | Degrees of Freedom                                                         |
 | ECS               | Entity Component System — Bevy's data-oriented architecture                |
 | Composition fragment | A configuration block — inline or named — that selects partition implementations at a given scope within the fractal structure. A session is a composition fragment at layer 0. A scenario is a composition fragment at layer 1. A vehicle section, a physics preset, and a visualization preset are composition fragments at progressively narrower scopes. All composition fragments share the same override and inheritance semantics (see SIM-SYS-024, SIM-SYS-025) |
@@ -99,7 +100,7 @@ operational mission data are outside the scope of this specification.
 | ISA               | International Standard Atmosphere                                          |
 | Fractal partition pattern | The architectural principle that the system is decomposed into layers and partitions, where each partition at every layer applies the same contract/implementation/compositor structure and the same event, configuration, and communication primitives as the system level. Named for the self-similarity of structure at every scale. See SIM-SYS-004 |
 | Layer             | A level in the system's hierarchical decomposition. Layer 0 is the system level; layer 1 is the partition level. The fractal partition pattern applies at every layer: each uses the same structural primitives (contracts, events, composition) as the layer above it |
-| Layer and partition uniformity principle | The defining property of the fractal partition pattern: structural primitives (contracts, events, configuration, composition) are identical in kind across all layers and partitions. A construct available at layer 0 is available in the same form at layer 1 and beyond |
+| Layer and partition uniformity principle | The defining property of the fractal partition pattern: structural primitives (contracts, events, configuration, composition, specification, and documentation structure) are identical in kind across all layers and partitions. A construct available at layer 0 is available in the same form at layer 1 and beyond |
 | NED               | North-East-Down coordinate frame                                           |
 | Partition         | A functional subdivision of the system at a given layer. At layer 0, the four top-level partitions (physics, GN&C, visualization, UI). At layer 1, sub-components within a partition (e.g., atmosphere model, navigation estimator). Each partition is independently replaceable provided it conforms to its layer's interface contracts |
 | Plugin            | A Bevy `Plugin` implementor, or a dynamically loaded shared library        |
@@ -197,8 +198,8 @@ implementation/compositor pattern, such that sub-components within a partition (
 aerodynamic model, atmosphere model, navigation estimator) are each independently
 replaceable via trait objects without modifying their siblings. The **layer and partition
 uniformity principle** shall hold: the same structural primitives — contracts, events
-(see SIM-SYS-035), configuration (see SIM-SYS-023), composition, and
-specification (see SIM-SYS-033) — shall be identical in kind at every layer.
+(see SIM-SYS-035), configuration (see SIM-SYS-023), composition, specification, and
+documentation structure (see SIM-SYS-033) — shall be identical in kind at every layer.
 
 **Rationale:** The fractal partition pattern ensures that the modularity, event handling,
 composition mechanisms, and specification structure proven at the system level are
@@ -1313,27 +1314,55 @@ requests.
 
 ---
 
-### SIM-SYS-033 — Partition-level Specifications
+### SIM-SYS-033 — Partition-level Specifications and Documentation Structure
 
-**Statement:** Each partition crate shall maintain a `docs/design/SPECIFICATION.md`
-containing requirements that individually trace to one or more SIM-SYS identifiers in
-this document. No partition-level requirement shall exist without a parent SIM-SYS
-requirement.
+**Statement:** Each partition shall maintain a `docs/` directory whose structure
+follows the Diátaxis documentation framework and is uniform across all partitions at
+all layers:
 
-**Rationale:** The fractal partition pattern requires traceability at every layer of
-decomposition. Bidirectional traceability between layer 0 (system) and layer 1
-(partition) requirements ensures that all system intents are verifiably allocated to an
-implementing partition, and that no partition-level requirement is orphaned from
-system-level intent.
+| Directory             | Diátaxis Quadrant | Content                                    |
+|-----------------------|-------------------|--------------------------------------------|
+| `docs/tutorials/`    | Tutorial          | Learning-oriented guided walkthroughs       |
+| `docs/how-to/`       | How-to guide      | Task-oriented procedural instructions       |
+| `docs/reference/`    | Reference         | Information-oriented technical descriptions |
+| `docs/explanation/`  | Explanation       | Understanding-oriented conceptual discussion|
+| `docs/design/`       | —                 | `SPECIFICATION.md` and design artifacts     |
+
+The `docs/design/SPECIFICATION.md` shall contain requirements that individually trace
+to one or more identifiers in the parent layer's specification. No requirement shall
+exist without a parent requirement in the layer above. Where a partition identifies its
+own independently replaceable sub-partitions (layer 2), those sub-partitions shall
+maintain the same `docs/` structure and their own `SPECIFICATION.md` tracing to the
+partition-level specification — perpetuating the fractal partition pattern to arbitrary
+depth.
+
+**Rationale:** The fractal partition pattern requires that specification structure and
+documentation structure propagate uniformly to every layer of decomposition. A Diátaxis-
+aligned `docs/` folder ensures that each partition — regardless of its layer — presents
+its documentation in the same four quadrants. A contributor navigating from the system-
+level physics partition into its atmosphere sub-partition finds the same documentation
+layout, the same specification format, and the same traceability conventions.
+Bidirectional traceability between each layer's specification and the layer above ensures
+that all intents are verifiably allocated downward and no requirement is orphaned from
+its parent.
 
 **Verification Expectations:**
-- Pass: Every requirement in each partition SPECIFICATION.md includes a `Traces to:`
-  field referencing at least one `SIM-SYS-NNN` identifier present in this document.
-- Pass: Every `SIM-SYS` requirement in this document is referenced by at least one
-  partition-level requirement.
-- Fail: A partition SPECIFICATION.md contains a requirement with no `Traces to:` field.
-- Fail: A `SIM-SYS` requirement exists with no corresponding partition-level child
-  requirement in any applicable document listed in Section 2.
+- Pass: Every partition's `docs/` directory contains the five subdirectories listed
+  above (directories may be empty if no content exists yet, but the structure is
+  present).
+- Pass: Every requirement in each partition's `SPECIFICATION.md` includes a `Traces to:`
+  field referencing at least one identifier in the parent layer's specification.
+- Pass: Every requirement in this document is referenced by at least one partition-level
+  requirement.
+- Pass: Where a partition defines independently replaceable sub-partitions, each
+  sub-partition maintains its own `docs/` directory with the same Diátaxis structure
+  and a `SPECIFICATION.md` tracing to the partition-level specification.
+- Fail: A partition's `SPECIFICATION.md` contains a requirement with no `Traces to:`
+  field.
+- Fail: A requirement in any layer's specification exists with no corresponding child
+  requirement in any applicable specification at the layer below.
+- Fail: A partition's `docs/` structure differs from the Diátaxis layout used by its
+  parent or sibling partitions.
 
 ---
 
@@ -1396,7 +1425,7 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-030 | Embedding Interface                | TF-SRS-006                |
 | SIM-SYS-031 | Telemetry Recording                | TF-SRS-004                |
 | SIM-SYS-032 | Telemetry Playback                 | TF-SRS-003, TF-SRS-004    |
-| SIM-SYS-033 | Partition-level Specifications     | TF-SRS-001 through 006    |
+| SIM-SYS-033 | Partition-level Specifications and Documentation Structure | TF-SRS-001 through 006 |
 | SIM-SYS-034 | Test Coverage of Requirements      | TF-SRS-001 through 006    |
 | SIM-SYS-035 | Event System Architecture          | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-036 | Time-triggered Events              | TF-SRS-005, TF-SRS-006    |

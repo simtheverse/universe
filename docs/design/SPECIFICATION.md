@@ -199,8 +199,9 @@ implementation/compositor pattern, such that sub-components within a partition (
 aerodynamic model, atmosphere model, navigation estimator) are each independently
 replaceable via trait objects without modifying their siblings. The **layer and partition
 uniformity principle** shall hold: the same structural primitives — contracts, events
-(see SIM-SYS-035), configuration (see SIM-SYS-023), composition, specification, and
-documentation structure (see SIM-SYS-033) — shall be identical in kind at every layer.
+(see SIM-SYS-035), configuration (see SIM-SYS-023), composition, specification,
+documentation structure (see SIM-SYS-033), and testing structure (see SIM-SYS-047,
+SIM-SYS-048) — shall be identical in kind at every layer.
 
 **Rationale:** The fractal partition pattern ensures that the modularity, event handling,
 composition mechanisms, and specification structure proven at the system level are
@@ -1530,6 +1531,141 @@ reviews and to identify which tests must be updated when a requirement changes.
 
 ---
 
+### SIM-SYS-047 — Contract Tests at Every Layer
+
+**Statement:** Each independently replaceable partition at every layer shall have
+**contract tests**: tests that instantiate the partition implementation in isolation,
+invoke it through the contract traits defined at its layer, and verify that outputs
+conform to the contract's behavioral requirements. Contract tests shall not require
+instantiation of peer partitions at the same layer. Where a partition defines
+independently replaceable sub-partitions (layer 1 and beyond), each sub-partition shall
+have its own contract tests against the sub-partition contract traits, following the
+same structure.
+
+**Rationale:** The fractal partition pattern guarantees independent replaceability at
+every layer. That guarantee is only verifiable if each partition can be tested in
+isolation against its contract — without its peers. Contract tests make the
+replaceability guarantee concrete: if an alternative implementation passes the contract
+tests, it is a valid replacement. The same testing structure propagates to every layer
+because the same contract structure propagates to every layer. Contract tests use the
+contract's own input and output types to supply data, not mocks of peer partitions,
+ensuring that tests exercise the actual contract boundary and cannot silently diverge
+from the real interface.
+
+**Verification Expectations:**
+- Pass: For each partition at layer 0, a test exists that instantiates the partition
+  implementation, invokes it through `sim-core` traits, and asserts behavioral
+  properties — without any other partition crate compiled or instantiated.
+- Pass: For each independently replaceable sub-partition at layer 1, a test exists that
+  instantiates the sub-partition implementation, invokes it through the partition's
+  internal contract traits, and asserts behavioral properties — without sibling
+  sub-partitions instantiated.
+- Pass: When an alternative implementation of a partition is provided, the same contract
+  test suite runs against it without modification and reports pass/fail against the
+  contract.
+- Fail: A contract test for a partition requires instantiation of a peer partition at
+  the same layer (indicating the test is not isolated at the contract boundary).
+- Fail: A partition at any layer has no tests that exercise its contract traits in
+  isolation.
+
+---
+
+### SIM-SYS-048 — Compositor Tests at Every Layer
+
+**Statement:** Each layer that composes partitions shall have **compositor tests**:
+tests that verify the compositor correctly assembles its partitions and that the
+assembled partitions interact correctly through their shared contracts. At layer 0, this
+means the orchestrator composes the four top-level partitions and they exchange messages
+correctly through the bus. At layer 1, this means a partition's internal compositor
+assembles its sub-models and they interact correctly through the partition's contract
+module. Compositor tests shall assume that lower-layer contract tests pass and shall
+focus on composition correctness, not on re-verifying individual partition behavior.
+
+**Rationale:** Contract tests verify individual partitions in isolation. Compositor
+tests verify that the compositor's assembly logic — selection, wiring, initialization
+ordering — is correct and that the assembled partitions communicate through their
+contracts as expected. Without compositor tests, composition bugs (incorrect wiring,
+missing initialization, message routing errors) are only caught by expensive system-level
+tests where failure localization is difficult. Scoping compositor tests to a single
+layer's assembly prevents the common failure mode of integration tests that test
+everything at once.
+
+**Verification Expectations:**
+- Pass: A layer 0 compositor test composes all four partitions using the orchestrator,
+  runs at least one simulation tick, and verifies that inter-partition messages are
+  exchanged correctly (e.g., physics produces `PlantState`, GN&C consumes it and
+  produces `GNCCommand`).
+- Pass: For each partition that decomposes into sub-partitions, a layer 1 compositor
+  test composes the sub-partitions using the partition's internal compositor and verifies
+  that they interact correctly through the partition's contract module.
+- Pass: When a layer 0 compositor test fails but all layer 1 contract tests pass, the
+  failure is localizable to inter-partition communication or orchestrator assembly logic.
+- Fail: A layer in the system that composes independently replaceable sub-partitions has
+  no compositor test.
+- Fail: A compositor test re-tests internal behavior of individual partitions rather
+  than focusing on their composition and interaction.
+
+---
+
+### SIM-SYS-049 — System Tests Trace to Requirements
+
+**Statement:** System-level tests shall exercise the full simulation stack from session
+configuration to final output. Each system test shall trace to one or more SIM-SYS
+requirement identifiers. System tests shall use the same entry points available to an
+operator or embedder — session-level composition fragments, the orchestrator's public
+API, or the command-line interface — and shall not bypass composition or initialization
+to reach internal partition interfaces directly.
+
+**Rationale:** System tests verify end-to-end properties that emerge from the
+interaction of all layers: a vehicle reaching an expected final state, an event sequence
+producing the expected execution state transitions, telemetry output matching a
+reference. Requiring traceability to SIM-SYS requirements ensures that coverage analysis
+is trivial — every requirement with a system test is verified end-to-end, and
+requirements without system tests represent visible gaps. System tests complement, but
+do not replace, contract and compositor tests at lower layers.
+
+**Verification Expectations:**
+- Pass: Each system test file or test function includes a comment or attribute
+  identifying the SIM-SYS requirement(s) it verifies.
+- Pass: Every SIM-SYS requirement that specifies observable system behavior has at least
+  one system test.
+- Pass: System tests use session-level composition fragments as input and assert against
+  simulation outputs (final vehicle state, telemetry, event logs) — not against internal
+  partition state.
+- Fail: A system test bypasses the orchestrator or compositor to directly instantiate
+  and invoke partition internals.
+- Fail: A SIM-SYS requirement with observable system behavior has no corresponding
+  system test.
+
+---
+
+### SIM-SYS-050 — Transport-parameterized Compositor Tests
+
+**Statement:** Layer 0 compositor tests shall be parameterized over transport mode. The
+same compositor test scenario shall execute under in-process synchronous, asynchronous
+cross-thread, and network-based transport modes, and shall produce identical final
+vehicle state (within floating-point determinism limits as specified in SIM-SYS-005).
+
+**Rationale:** Transport independence (SIM-SYS-005) is a correctness constraint that
+requires verification across all three transport modes. Making this a parameterized
+compositor test — rather than a separate test category — follows from the fractal
+partition pattern: transport is a layer 0 composition concern, so transport verification
+belongs in layer 0 compositor tests. Layer 1 tests are unaware of transport because
+layer 1 partitions are unaware of transport.
+
+**Verification Expectations:**
+- Pass: A compositor test runs the same scenario under all three transport modes and
+  the final vehicle state matches across modes within floating-point determinism limits.
+- Pass: The parameterization requires no changes to partition code or partition-level
+  test code — only the transport selection in the session-level composition fragment
+  differs.
+- Fail: A transport mode produces a different final vehicle state from the other modes
+  beyond floating-point determinism limits.
+- Fail: Transport-mode testing requires partition-specific test code or partition-aware
+  test infrastructure.
+
+---
+
 ## 17. Requirements Traceability Matrix
 
 | ID          | Title                              | Allocated To              |
@@ -1580,3 +1716,7 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-044 | State Snapshot as Composition Fragment | TF-SRS-006          |
 | SIM-SYS-045 | State Dump and Load Operations     | TF-SRS-004, TF-SRS-006  |
 | SIM-SYS-046 | Shared State Machine Synchronization | TF-SRS-005            |
+| SIM-SYS-047 | Contract Tests at Every Layer   | TF-SRS-001 through 006    |
+| SIM-SYS-048 | Compositor Tests at Every Layer | TF-SRS-001 through 006    |
+| SIM-SYS-049 | System Tests Trace to Requirements | TF-SRS-001 through 006 |
+| SIM-SYS-050 | Transport-parameterized Compositor Tests | TF-SRS-005        |

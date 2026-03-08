@@ -27,6 +27,7 @@ same structural primitives appear at every layer:
 - **Specifications** follow the same requirement format with bidirectional traceability
   to the layer above.
 - **Documentation** follows the same Diátaxis structure at every partition.
+- **Testing** follows the same contract test / compositor test structure at every layer.
 
 The pattern is called "fractal" because zooming into any partition reveals the same
 structure as the system as a whole, and zooming out reveals that universe itself is a
@@ -111,6 +112,29 @@ the same traceability conventions. Specifications at each layer nucleate specifi
 at the next layer — this document nucleates partition specs, which nucleate sub-partition
 specs where warranted — propagating traceability and structural discipline to arbitrary
 depth.
+
+### Testing mirrors the partition structure
+
+The fractal partition pattern produces a testing strategy without requiring one to be
+designed independently. At each layer, **contract tests** verify that each partition
+satisfies its contract traits in isolation — without instantiating peer partitions.
+**Compositor tests** verify that the compositor at that layer correctly assembles its
+partitions and that they interact through their contracts. The same contract test /
+compositor test pair repeats at every layer of decomposition.
+
+Contract tests are possible because the contract boundary is the isolation boundary. If
+a partition can be replaced without modifying its peers, it can be tested without
+instantiating its peers. The structural guarantee that makes the system modular is the
+same guarantee that makes the tests fast and independent. When an alternative
+implementation is provided — a student's GN&C plugin, a lab's atmosphere model — the
+existing contract tests apply to it unchanged. If it passes, it is a valid replacement.
+
+System-level tests exist only at the outermost layer. They exercise the full stack from
+session configuration to final output and trace to system-level requirements. They are
+expensive and slow relative to contract tests, and their role is not to catch bugs in
+individual partitions but to verify end-to-end properties that emerge from the
+interaction of all layers. The testing pyramid — many contract tests, fewer compositor
+tests, few system tests — falls out naturally from the layer structure.
 
 ### Universe is a partition in your system
 

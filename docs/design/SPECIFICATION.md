@@ -1666,6 +1666,149 @@ layer 1 partitions are unaware of transport.
 
 ---
 
+### SIM-SYS-051 — Test Reference Data Ownership at Contract Boundaries
+
+**Statement:** Each contract shall own the reference data used to verify implementations
+against it. Reference data shall consist of two elements: (a) **canonical inputs** —
+representative instances of the contract's input types, and (b) **expected output
+properties** — invariants, tolerances, and constraints that any conforming implementation
+must satisfy for those inputs. Contract tests shall assert against the contract's stated
+output properties, not against exact output values captured from a specific
+implementation. Where a contract defines numerical tolerances, those tolerances shall be
+stated in the contract itself and referenced by the contract tests.
+
+**Rationale:** In a fractal partition system, contracts exist at every layer and tests
+exist at every layer. If test reference data is maintained independently of the contracts
+it verifies, a contract change at layer N can silently invalidate reference data at
+layers N through 0 — each layer's compositor and system tests may assert against stale
+expected values without any test failing. By making the contract the single owner of its
+reference data, the reference data changes when and only when the contract changes, and
+both changes are made by the same author in the same artifact. This eliminates cascade
+invalidation for contract tests and bounds the propagation of reference data changes to
+the contract boundary where they originate.
+
+**Verification Expectations:**
+- Pass: Each contract defines canonical inputs as part of its test support module,
+  constructed from the contract's own input types.
+- Pass: Each contract defines expected output properties (invariants, tolerances,
+  constraints) alongside the canonical inputs, not in a separate golden file.
+- Pass: Contract tests assert against the contract-defined output properties, not
+  against exact values captured from any particular implementation.
+- Pass: When a contract's behavioral requirements change, the canonical inputs and
+  expected output properties are updated as part of the same change.
+- Fail: A contract test compares outputs against a golden file that is maintained
+  separately from the contract definition.
+- Fail: A contract's expected output properties reference tolerances or constraints
+  not stated in the contract itself.
+
+---
+
+### SIM-SYS-052 — Compositor Tests Assert Compositional Properties
+
+**Statement:** Compositor tests shall assert **compositional properties** — invariants
+that must hold when partitions are correctly assembled — rather than exact output values.
+Compositional properties include: messages sent by one partition are received by the
+intended consumer; conserved quantities (energy, mass, momentum) are preserved across
+partition boundaries within stated tolerances; execution ordering respects the declared
+dependency graph; and state that one partition publishes is visible to its declared
+consumers in the same tick or the next tick as specified by the contract. Where a
+compositor test requires regression baselines with exact output values, those baselines
+shall be generated mechanically from the current contract-conforming implementations,
+not maintained by hand.
+
+**Rationale:** Compositor tests verify composition correctness — wiring, ordering,
+message delivery — not the numerical behavior of individual partitions. Asserting exact
+output values in compositor tests couples them to every partition's implementation
+details, so that a legitimate improvement in any partition invalidates compositor-level
+golden files across the layer boundary. Compositional properties are stable across
+implementation changes because they derive from the composition structure, not from any
+specific partition's output values. Where exact regression baselines are unavoidable,
+mechanical generation from the current implementations makes regeneration a deterministic
+operation triggered by any partition change, rather than a manual cross-team coordination
+effort.
+
+**Verification Expectations:**
+- Pass: Each compositor test asserts at least one compositional property (message
+  delivery, conservation, ordering, or visibility).
+- Pass: Compositor tests do not fail when a partition's internal implementation is
+  replaced with an alternative that passes its contract tests.
+- Pass: Where regression baselines with exact values exist, a documented generation
+  command can regenerate them from the current implementations without manual editing.
+- Fail: A compositor test asserts exact output values that were captured from a specific
+  implementation and maintained as a hand-edited golden file.
+- Fail: Replacing a partition with a contract-conforming alternative causes compositor
+  test failures unrelated to composition correctness.
+
+---
+
+### SIM-SYS-053 — System Test Reference Generation
+
+**Statement:** Where system tests require exact end-to-end reference outputs for
+requirements traceability, those references shall be generated by a documented,
+repeatable process that runs the full stack with known-good implementations and captures
+the output. The generation process shall follow the layer structure: when a partition
+implementation changes, reference regeneration shall proceed bottom-up — the changed
+partition's contract test reference data is verified first, then compositor-level
+references are regenerated, then system-level references are regenerated. The
+regeneration command, the implementations used, and the version of each contract shall
+be recorded alongside the generated reference.
+
+**Rationale:** System tests sometimes require exact reference outputs to verify
+requirements traceability (e.g., "a vehicle launched with these initial conditions
+reaches this final state"). Hand-maintaining these references across a fractal structure
+is fragile — a sub-model improvement at layer 2 changes outputs that propagate through
+layer 1 compositor assembly to layer 0 system test references. Mechanical generation
+with recorded provenance makes regeneration deterministic and auditable. Bottom-up
+ordering ensures that no reference is regenerated against a partition that has not itself
+been verified, preserving the diagnostic layering of the test pyramid.
+
+**Verification Expectations:**
+- Pass: Each system test that asserts exact output values has a corresponding reference
+  file generated by a documented command.
+- Pass: Each generated reference file records the generation command, the implementation
+  versions used, and the contract versions in effect.
+- Pass: After a partition implementation change, running the documented regeneration
+  command produces updated references that reflect the change, and the system test passes
+  against the new references.
+- Fail: A system test reference file has no recorded provenance (no generation command
+  or version information).
+- Fail: A partition implementation change requires manual editing of system test
+  reference files rather than regeneration.
+
+---
+
+### SIM-SYS-054 — Contract Versioning Scopes Reference Data Propagation
+
+**Statement:** When a contract's behavioral requirements change, the change shall be
+expressed as a new contract version. Each contract version shall carry its own canonical
+inputs and expected output properties (per SIM-SYS-051). Alternative implementations
+targeting the previous contract version shall remain testable against that version's
+reference data until they migrate to the new version. The contract version boundary
+shall be the propagation boundary for reference data changes — implementations targeting
+an unchanged contract version shall not require reference data updates.
+
+**Rationale:** The fractal partition pattern supports alternative implementations at
+every layer. Without contract versioning, a contract change forces all alternative
+implementations to update simultaneously, and their reference data becomes invalid in a
+single event. Versioning bounds the propagation: a new contract version creates new
+reference data, but implementations targeting the old version continue to use the old
+version's reference data until they choose to migrate. This allows alternatives to
+migrate on their own schedule while maintaining test coverage throughout the transition.
+
+**Verification Expectations:**
+- Pass: Each contract that has undergone a behavioral change maintains version-scoped
+  canonical inputs and expected output properties for each supported version.
+- Pass: An alternative implementation targeting contract version N passes contract tests
+  using version N's reference data, even after version N+1 exists.
+- Pass: A contract version change does not cause test failures in implementations
+  targeting the previous version.
+- Fail: A contract behavioral change invalidates reference data for implementations
+  that have not migrated to the new contract version.
+- Fail: A contract carries canonical inputs and expected output properties that are not
+  scoped to a specific contract version.
+
+---
+
 ## 17. Requirements Traceability Matrix
 
 | ID          | Title                              | Allocated To              |
@@ -1720,3 +1863,7 @@ layer 1 partitions are unaware of transport.
 | SIM-SYS-048 | Compositor Tests at Every Layer | TF-SRS-001 through 006    |
 | SIM-SYS-049 | System Tests Trace to Requirements | TF-SRS-001 through 006 |
 | SIM-SYS-050 | Transport-parameterized Compositor Tests | TF-SRS-005        |
+| SIM-SYS-051 | Test Reference Data Ownership at Contract Boundaries | TF-SRS-001 through 006 |
+| SIM-SYS-052 | Compositor Tests Assert Compositional Properties | TF-SRS-001 through 006 |
+| SIM-SYS-053 | System Test Reference Generation    | TF-SRS-006              |
+| SIM-SYS-054 | Contract Versioning Scopes Reference Data Propagation | TF-SRS-001 through 006 |

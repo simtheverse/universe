@@ -146,6 +146,53 @@ Universe is a partition within that pipeline's layer 0, swappable for an alterna
 simulation engine through the same replaceability guarantee universe provides to its own
 sub-partitions.
 
+## Companion explanations
+
+The fractal partition pattern is a single structural idea, but its consequences in
+specific domains are detailed enough to warrant their own treatment. Each companion
+document takes one aspect of the pattern — an aspect summarized in the sections above —
+and explores it in full depth: the problems it creates, the design choices it forces,
+and the tradeoffs involved.
+
+### Inter-partition communication
+
+The contract-centric design summarized above (contracts in `sim-core`, star topology,
+no partition-to-partition imports) creates a specific communication architecture. How do
+partitions exchange data without coupling? How does the bus route typed messages? How
+does the shared execution state machine synchronize across transport modes?
+
+[Inter-partition Communication](inter-partition-communication.md) explains the
+communication model in detail: the contract crate's structural role, typed message
+channels, the three transport modes and their equivalence guarantee, and the shared
+state machine synchronization protocol. Where this document says "contracts define what
+a partition may consume," that document shows the mechanics of how consumption works
+across process and network boundaries.
+
+### Testing
+
+The testing structure summarized above (contract tests, compositor tests, system tests
+mirroring the layer structure) raises its own set of questions. What exactly is a
+contract test isolating against? Why not use mocks? How do compositor tests avoid the
+brittleness of integration tests? How do system tests relate to requirements traceability?
+
+[Testing in the Fractal Partition Pattern](testing-in-the-fractal-partition-pattern.md)
+develops the full testing methodology: precise definitions of the three test types, how
+test isolation follows from contract isolation, why alternative implementations are
+testable by construction, and the design rationale for each test category.
+
+### Test reference data
+
+The testing methodology in turn creates a data management problem. Tests at every layer
+need reference inputs and expected outputs. In a fractal system, a contract change at any
+layer can propagate upward through compositor and system test references across every
+layer above it. How is reference data maintained without cascade invalidation?
+
+[Test Reference Data in the Fractal Partition Pattern](test-reference-data-in-the-fractal-partition-pattern.md)
+explains the reference data architecture: contract-owned canonical inputs and output
+properties, compositional invariants for compositor tests, mechanically generated system
+test baselines with bottom-up regeneration, and contract versioning as a propagation
+boundary.
+
 ## Design choices and tradeoffs
 
 ### Why uniformity over specialization

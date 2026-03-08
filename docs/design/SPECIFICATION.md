@@ -106,6 +106,7 @@ operational mission data are outside the scope of this specification.
 | Plugin            | A Bevy `Plugin` implementor, or a dynamically loaded shared library        |
 | Scenario          | A layer 1 composition fragment describing mission-level configuration: vehicle definitions, physics sub-model selections, environment models, events, and initial conditions. A session composes one or more scenarios |
 | Session           | The layer 0 composition fragment describing a simulation run: transport mode, timing parameters, active partitions, and which scenarios to compose. A session is the top-level entry point for the compositor |
+| State snapshot    | A composition fragment produced by capturing the complete simulation state at a point in time. A state snapshot is not a distinct system primitive — it is a composition fragment whose fields happen to have been machine-generated rather than hand-authored. Snapshots are loadable, inheritable, and overridable using the same mechanisms as any other composition fragment (see SIM-SYS-044) |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
 | VehicleTypeId     | A stable string identifier for a vehicle design (e.g., `"cessna172"`)     |
 | WGS84             | World Geodetic System 1984 — standard geodetic reference frame             |
@@ -287,6 +288,47 @@ version compatibility tracking.
   named structs with documented field semantics.
 - Fail: Any inter-partition exchange relies on a `Vec<u8>` or `serde_json::Value` as the
   message payload without an enclosing typed wrapper defined in `sim-core`.
+
+---
+
+### SIM-SYS-046 — Shared State Machine Synchronization
+
+**Statement:** When a state machine must be observed by multiple partitions at the same
+layer, its type and transition rules shall be defined in the contract crate for that
+layer. Exactly one owner — the orchestrator at layer 0, or a designated partition at
+deeper layers — shall hold the authoritative value. All other partitions at that layer
+shall observe the current state as a read-only value published through the contract
+crate. State transitions shall be requested via the simulation bus, never by direct
+mutation of the authoritative value. The owner shall evaluate requests against the state
+machine's transition rules and reject invalid transitions. Consistent with the fractal
+partition pattern (SIM-SYS-004), this mechanism shall be identical at every layer.
+
+**Rationale:** Partitions at the same layer frequently need to coordinate around shared
+state machines — execution lifecycle, mission phase, mode selections — without coupling
+to each other's internals. Placing the type and transition rules in the contract crate
+makes the state machine part of the layer's interface contract rather than an
+implementation detail of any single partition. Single-owner authority with bus-mediated
+requests prevents conflicting mutations and provides a single audit point for
+transitions. The fractal partition pattern requires this mechanism to be available at
+every layer: the execution state machine (SIM-SYS-040) is one instance at layer 0, but
+sub-partitions at layer 1 or deeper may define their own shared state machines using
+the same pattern.
+
+**Verification Expectations:**
+- Pass: All partitions at a given layer read a shared state machine's current value from
+  the same contract-crate-defined type; no partition defines its own copy of the state
+  enum.
+- Pass: A partition requesting a transition emits a typed request on the bus; the owner
+  evaluates and applies or rejects it according to the defined transition rules.
+- Pass: An invalid transition request is rejected by the owner and logged; the state
+  machine value remains unchanged.
+- Pass: At layer 1, a sub-partition defines a shared state machine in its layer's
+  contract module using the same owner/request/observe pattern used for the execution
+  state machine at layer 0.
+- Fail: A partition directly mutates a shared state machine's value without emitting a
+  request on the bus.
+- Fail: The mechanism for defining and synchronizing a shared state machine at layer 1
+  differs structurally from the mechanism used at layer 0.
 
 ---
 
@@ -838,6 +880,103 @@ templates, and scenario variants are all composition fragments.
 
 ---
 
+### SIM-SYS-044 — State Snapshot as Composition Fragment
+
+**Statement:** The system shall support capturing the complete simulation state at any
+point during execution and emitting it as a TOML composition fragment. The contract
+crate for each layer shall define a state contribution contract that each partition at
+that layer implements. The orchestrator shall assemble the complete snapshot by invoking
+each partition's state contribution implementation and composing the results into a
+single fragment. Loading a snapshot shall use the same contract in reverse: the
+orchestrator decomposes the fragment and passes each partition's section to that
+partition's load implementation. The resulting snapshot fragment shall be a valid
+composition fragment loadable by the same mechanism used for sessions and scenarios
+(SIM-SYS-023). The snapshot shall include the current simulation time, execution state,
+and the complete internal state of each partition for all active vehicles. The snapshot
+fragment shall be human-readable, inspectable, and editable using standard text tools.
+
+**Rationale:** State persistence is a natural extension of the composition fragment
+mechanism rather than a separate system. Initial conditions are already composition
+fragment content — a state snapshot is a complete set of initial conditions captured at
+a specific simulation time. By expressing snapshots as composition fragments, they
+inherit all existing fragment capabilities: `extends` inheritance (SIM-SYS-024), named
+references (SIM-SYS-025), inline overrides, and cross-layer override semantics. An
+operator can extend a snapshot and override a single vehicle's position, or reference a
+named snapshot in a session fragment. Defining the state contribution contract in the
+contract crate (consistent with SIM-SYS-003) ensures that all partitions serialize and
+deserialize state through a uniform interface rather than each inventing its own
+mechanism. The orchestrator coordinates dump and load without needing knowledge of any
+partition's internal state structure — it invokes the contract and composes or
+decomposes the resulting fragment sections.
+
+**Verification Expectations:**
+- Pass: A state snapshot captured during a Running simulation produces a valid TOML file
+  that parses without error as a composition fragment.
+- Pass: The snapshot fragment, when loaded as the basis for a new session, produces a
+  simulation whose initial state matches the captured state (within floating-point
+  determinism limits).
+- Pass: A snapshot fragment supports the `extends` field: a fragment containing only
+  `extends = "snapshot.toml"` and a single overridden vehicle position produces a
+  simulation that differs from the snapshot only in the overridden vehicle's initial
+  position.
+- Pass: Each partition's state section in the snapshot uses the same TOML structure as
+  the corresponding partition's configuration section in a scenario fragment.
+- Pass: A snapshot fragment is usable as a named fragment: `state = "checkpoint-3"`
+  resolves to a snapshot file and loads correctly.
+- Fail: State snapshots are emitted in a binary or opaque format that cannot be parsed
+  as a TOML composition fragment.
+- Fail: Loading a snapshot requires a mechanism distinct from the composition fragment
+  loader used for sessions and scenarios.
+- Pass: The state contribution contract is defined in the contract crate for the layer;
+  no partition defines its own serialization interface for state snapshots.
+- Pass: An alternative partition implementation that conforms to the state contribution
+  contract produces a snapshot whose section is loadable by the orchestrator without
+  modification to the orchestrator or any other partition.
+- Fail: The snapshot omits partition state that would be necessary to reproduce the
+  captured simulation state on reload.
+- Fail: A partition implements state dump or load through a mechanism other than the
+  contract defined in the layer's contract crate.
+
+---
+
+### SIM-SYS-045 — State Dump and Load Operations
+
+**Statement:** The system shall provide operations to dump and load simulation state.
+A dump operation shall capture the current state and write it to a specified file path
+as a composition fragment (SIM-SYS-044). A load operation shall accept a state snapshot
+composition fragment and restore the simulation to the captured state, replacing the
+current state of all partitions and vehicles. Dump shall be invocable during any
+execution state (Running, Paused, Stopped). Load shall be invocable from the Paused or
+Stopped execution states; loading while Running shall not be supported. Both operations
+shall be requestable via the simulation bus, the UI partition, and the event system
+(as event actions), consistent with the uniform request mechanisms used for execution
+state transitions (SIM-SYS-041, SIM-SYS-042).
+
+**Rationale:** Dump and load are the operational interface to state snapshots. Dump
+during a Running simulation enables capturing transient conditions without pausing;
+dump while Paused or Stopped enables deliberate checkpointing. Restricting load to
+non-Running states prevents mid-tick state corruption. Making dump and load available
+through the same request channels as execution state transitions — bus messages, UI
+controls, and event actions — keeps the operational surface uniform. An event action
+`"state_dump"` with a path parameter allows scenario authors to script automatic
+checkpoints at specific times or conditions without UI interaction.
+
+**Verification Expectations:**
+- Pass: A dump operation invoked while the simulation is Running produces a valid
+  snapshot fragment without interrupting physics integration.
+- Pass: A dump operation invoked while Paused produces a snapshot fragment, and
+  loading that fragment in a new session produces identical initial state.
+- Pass: A load operation invoked while Paused replaces all vehicle and partition state
+  with the snapshot's state; on resume, the simulation continues from the loaded state.
+- Pass: An event defined as `action = "state_dump"` with `path = "checkpoint.toml"`
+  triggers at the specified condition and produces a snapshot file at the given path.
+- Pass: A load request emitted while the simulation is Running is rejected (logged and
+  ignored), and the simulation continues unaffected.
+- Fail: Dump or load requires a dedicated API distinct from the bus message and event
+  action mechanisms used for execution state control.
+
+---
+
 ## 13. Distribution and Packaging
 
 ---
@@ -1184,13 +1323,15 @@ The current execution state shall be available as a named resource or type in `s
 accessible to all partitions. No partition shall maintain a private copy of the execution
 state that diverges from the authoritative value held by the orchestrator.
 
-**Rationale:** In a fractally partitioned system, any partition at any layer may need to
-observe or influence the simulation lifecycle. Execution state is currently implicit in
-SIM-SYS-021's description of UI controls. Without a formal state machine, partitions
-cannot consistently reason about valid transitions, detect invalid requests, or
-synchronize their behavior with the global execution lifecycle. An explicit, centrally
-defined state machine prevents undefined behavior when multiple sources (UI, events,
-partition logic) attempt to influence execution state.
+**Rationale:** The execution state machine is the primary instance of the shared state
+machine synchronization pattern (SIM-SYS-046) at layer 0. In a fractally partitioned
+system, any partition at any layer may need to observe or influence the simulation
+lifecycle. Execution state is currently implicit in SIM-SYS-021's description of UI
+controls. Without a formal state machine, partitions cannot consistently reason about
+valid transitions, detect invalid requests, or synchronize their behavior with the
+global execution lifecycle. An explicit, centrally defined state machine prevents
+undefined behavior when multiple sources (UI, events, partition logic) attempt to
+influence execution state.
 
 **Verification Expectations:**
 - Pass: The `sim-core` crate exports an enum or equivalent type representing the four
@@ -1436,3 +1577,6 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-041 | Execution State Transition Requests| TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-042 | Execution State Change as Event Action | TF-SRS-005, TF-SRS-006 |
 | SIM-SYS-043 | Execution State Transition Conflict Resolution | TF-SRS-006 |
+| SIM-SYS-044 | State Snapshot as Composition Fragment | TF-SRS-006          |
+| SIM-SYS-045 | State Dump and Load Operations     | TF-SRS-004, TF-SRS-006  |
+| SIM-SYS-046 | Shared State Machine Synchronization | TF-SRS-005            |

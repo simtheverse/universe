@@ -40,7 +40,13 @@
 This document defines the system-level requirements for **universe**, a modular,
 multi-fidelity flight simulation framework. It establishes the behavioral and structural
 contracts that all partitions must satisfy, and serves as the parent document to which
-all partition-level specifications trace.
+all partition-level specifications trace. The framework is organized according to the
+**fractal partition pattern**: the system is decomposed into layers (layer 0 at the
+system level, layer 1 at the partition level) and partitions at each layer, with each
+partition applying the same structural primitives — contracts, events, configuration,
+and composition — regardless of its position in the hierarchy. This layer and partition
+uniformity principle ensures that constructs learned at one level apply identically at
+every other level.
 
 The framework is intended to support algorithm development, operator training, hardware-
 and software-in-the-loop validation, and conceptual design trades. It is additionally
@@ -85,13 +91,17 @@ operational mission data are outside the scope of this specification.
 | Contract crate    | A Rust crate that defines traits and data types but contains no implementation |
 | DoF               | Degrees of Freedom                                                         |
 | ECS               | Entity Component System — Bevy's data-oriented architecture                |
-| Fidelity tier     | A named level of physics model complexity (low, mid, high)                 |
+| Composition preset | A named, reusable scenario fragment that selects a specific set of layer 1 partition implementations within a domain. Applicable to any fractally partitioned domain (physics, visualization, GN&C), not only physics. See SIM-SYS-025 |
+| Fidelity tier     | A composition preset within the physics domain that selects sub-model implementations by complexity level (e.g., `"low"`, `"mid"`, `"high"`). Not a distinct system primitive — fidelity tiers are an emergent application of the fractal partition pattern's compositor mechanism |
 | GN&C              | Guidance, Navigation, and Control                                          |
 | IC                | Initial Conditions                                                         |
 | INCOSE            | International Council on Systems Engineering                               |
 | ISA               | International Standard Atmosphere                                          |
+| Fractal partition pattern | The architectural principle that the system is decomposed into layers and partitions, where each partition at every layer applies the same contract/implementation/compositor structure and the same event, configuration, and communication primitives as the system level. Named for the self-similarity of structure at every scale. See SIM-SYS-004 |
+| Layer             | A level in the system's hierarchical decomposition. Layer 0 is the system level; layer 1 is the partition level. The fractal partition pattern applies at every layer: each uses the same structural primitives (contracts, events, composition) as the layer above it |
+| Layer and partition uniformity principle | The defining property of the fractal partition pattern: structural primitives (contracts, events, configuration, composition) are identical in kind across all layers and partitions. A construct available at layer 0 is available in the same form at layer 1 and beyond |
 | NED               | North-East-Down coordinate frame                                           |
-| Partition         | A top-level functional subdivision of the system, implemented as a Rust crate |
+| Partition         | A functional subdivision of the system at a given layer. At layer 0, the four top-level partitions (physics, GN&C, visualization, UI). At layer 1, sub-components within a partition (e.g., atmosphere model, navigation estimator). Each partition is independently replaceable provided it conforms to its layer's interface contracts |
 | Plugin            | A Bevy `Plugin` implementor, or a dynamically loaded shared library        |
 | Scenario          | A TOML file fully describing a simulation run                              |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
@@ -112,8 +122,11 @@ and autonomy, (P3) three-dimensional visualization, and (P4) user interface and 
 control.
 
 **Rationale:** Partitioning by functional domain enforces separation of concerns, allows
-each domain to evolve at its own pace, and enables independent substitution of fidelity
-levels, student implementations, and third-party components without system-wide impact.
+each domain to evolve at its own pace, and enables independent substitution of
+composition presets, student implementations, and third-party components without
+system-wide impact.
+These four partitions form the layer 0 decomposition of the fractally partitioned
+system (see SIM-SYS-004).
 
 **Verification Expectations:**
 - Pass: The system executes a complete simulation run with all four partitions active and
@@ -134,10 +147,11 @@ without requiring modification to the source code of any other partition, provid
 replacement implementation conforms to the inter-partition interface contracts defined in
 `sim-core`.
 
-**Rationale:** Independent replaceability is the primary mechanism by which the framework
-accommodates student GN&C submissions, student visualization contributions, and
-laboratory-specific physics models, without requiring those contributors to understand
-or modify the broader system.
+**Rationale:** Independent replaceability at every layer is the defining structural
+guarantee of a fractally partitioned system. At layer 0, it is the primary mechanism by
+which the framework accommodates student GN&C submissions, student visualization
+contributions, and laboratory-specific physics models, without requiring those
+contributors to understand or modify the broader system.
 
 **Verification Expectations:**
 - Pass: An alternative implementation of any single partition is substituted in `sim-app`
@@ -171,17 +185,27 @@ of truth for interface evolution and versioning.
 
 ---
 
-### SIM-SYS-004 — Recursive Partition Pattern
+### SIM-SYS-004 — Fractal Partition Pattern
 
-**Statement:** The internal structure of each partition shall apply the same
-contract/implementation/compositor pattern used at the system level, such that
-sub-components within a partition (e.g., aerodynamic model, atmosphere model, navigation
-estimator) are each independently replaceable via trait objects without modifying their
-siblings.
+**Statement:** The system shall apply the **fractal partition pattern** at every level
+of its decomposition. At layer 0 (system level), the four top-level partitions use
+contract/implementation/compositor structure with shared interface types in `sim-core`.
+At layer 1 (partition level), the internal structure of each partition shall apply the
+same contract/implementation/compositor pattern, such that sub-components within a
+partition (e.g., aerodynamic model, atmosphere model, navigation estimator) are each
+independently replaceable via trait objects without modifying their siblings. The
+**layer and partition uniformity principle** shall hold: the same structural
+primitives — contracts, events (see SIM-SYS-035), configuration, and composition — shall
+be identical in kind at every layer.
 
-**Rationale:** Applying the same structural pattern recursively maximizes the surface
-area of modularity, allowing fidelity to be adjusted at the sub-model level, and
-allowing instructors to assign isolated sub-components to student teams.
+**Rationale:** The fractal partition pattern ensures that the modularity, event handling,
+and composition mechanisms proven at the system level are available in the same form
+within each partition. Like a fractal, zooming into any partition reveals the same
+contract/compositor/event structure as the system as a whole. This maximizes the surface
+area of independent replaceability, allows composition to be adjusted at the sub-model
+level (including fidelity selection via composition presets), and allows instructors to
+assign isolated sub-components to student teams — all
+using the same constructs they encounter at the system level.
 
 **Verification Expectations:**
 - Pass: Within the physics partition, substituting the atmosphere sub-model with an
@@ -190,8 +214,12 @@ allowing instructors to assign isolated sub-components to student teams.
 - Pass: Each partition contains a `contracts/` module or equivalent defining internal
   sub-component traits that are imported by implementations but not by callers outside
   the partition.
+- Pass: Events defined at layer 1 (within a partition) use the same definition schema
+  and trigger types as events defined at layer 0 (system level).
 - Fail: A sub-model within a partition is instantiated by name (e.g., via `match` on a
   string) in more than one location, indicating the compositor pattern is not applied.
+- Fail: A partition implements domain-specific mechanisms (events, composition,
+  configuration) using constructs that differ from those defined at the system level.
 
 ---
 
@@ -341,28 +369,39 @@ restart. It also supports incremental scenario construction during interactive u
 
 ---
 
-### SIM-SYS-011 — Physics Fidelity Tiers
+### SIM-SYS-011 — Physics Sub-model Composition
 
-**Statement:** The physics partition shall implement at minimum three selectable fidelity
-tiers: (a) low — flat-earth rigid body 6-DoF equations of motion; (b) mid — WGS84
-geodetic reference with International Standard Atmosphere; (c) high — mid-tier plus
-wind field, atmospheric turbulence, and full propulsion dynamics. The active tier shall
-be selectable per vehicle via scenario configuration.
+**Statement:** The physics partition shall provide at minimum three named composition
+presets that select specific layer 1 sub-model implementations: (a) `"low"` — flat-earth
+rigid body 6-DoF equations of motion; (b) `"mid"` — WGS84 geodetic reference with
+International Standard Atmosphere; (c) `"high"` — mid-tier plus wind field, atmospheric
+turbulence, and full propulsion dynamics. The active preset shall be selectable per
+vehicle via scenario configuration. Individual sub-model selections within a preset
+shall be independently overridable (see SIM-SYS-025).
 
-**Rationale:** Low fidelity minimizes computational cost for rapid GN&C prototyping.
-Mid fidelity introduces geodetic and atmospheric realism for navigation algorithm
-validation. High fidelity supports aerodynamic and propulsion sensitivity studies. No
-single tier satisfies all use cases.
+**Rationale:** Physics fidelity is not a special-purpose mechanism — it is the fractal
+partition pattern's compositor applied within the physics domain. Each fidelity level is
+a named composition of independently replaceable layer 1 partitions (gravity model,
+atmosphere model, aerodynamics model, propulsion model). Low-complexity compositions
+minimize computational cost for rapid GN&C prototyping. Mid-complexity compositions
+introduce geodetic and atmospheric realism for navigation algorithm validation.
+High-complexity compositions support aerodynamic and propulsion sensitivity studies. No
+single composition satisfies all use cases.
 
 **Verification Expectations:**
-- Pass: Each of the three fidelity tiers executes a straight-and-level flight scenario
-  without numerical divergence over a 60-second simulation.
-- Pass: Two vehicles in the same scenario may simultaneously operate at different
-  fidelity tiers with independent results.
-- Pass: Fidelity tier is changed between runs by modifying the scenario TOML only.
-- Fail: Any fidelity tier shares implementation source files with another tier in a
-  way that prevents one from being compiled without the other (see feature flag
+- Pass: Each of the three named composition presets executes a straight-and-level flight
+  scenario without numerical divergence over a 60-second simulation.
+- Pass: Two vehicles in the same scenario may simultaneously operate with different
+  composition presets and produce independent results.
+- Pass: The active composition preset is changed between runs by modifying the scenario
+  TOML only.
+- Pass: An individual sub-model within a preset is overridden via inline scenario
+  configuration without affecting the other sub-models selected by the preset.
+- Fail: Any composition preset shares implementation source files with another preset in
+  a way that prevents one from being compiled without the other (see feature flag
   requirement SIM-SYS-020).
+- Fail: Changing the physics composition requires a mechanism distinct from the
+  compositor pattern used at layer 0 or in other partitions.
 
 ---
 
@@ -373,10 +412,13 @@ field, atmospheric turbulence, terrain elevation, and gravity) as independently
 composable models. Each model shall be individually enabled, disabled, or replaced via
 scenario configuration without affecting the behavior of other active environment models.
 
-**Rationale:** Composability allows the instructor or researcher to isolate the effect of
-individual environment disturbances, add new environment models without modifying
-existing ones, and assign environment model implementations to student teams
-independently.
+**Rationale:** Environment models are layer 1 partitions within the physics domain.
+Their independent composability is a direct application of the fractal partition
+pattern (SIM-SYS-004): each sub-model is independently replaceable via the same
+contract/compositor structure used at the system level. This allows the instructor or
+researcher to isolate the effect of individual environment disturbances, add new
+environment models without modifying existing ones, and assign environment model
+implementations to student teams independently.
 
 **Verification Expectations:**
 - Pass: A scenario with only the ISA atmosphere model enabled produces the same altitude-
@@ -398,7 +440,7 @@ independently.
 `[sim].dt` field in the scenario TOML. The visualization and user interface partitions
 shall execute at their own independent update rates, decoupled from the physics rate.
 
-**Rationale:** Physics fidelity often demands high update rates (≥ 1 kHz) that are
+**Rationale:** High-fidelity physics compositions often demand high update rates (≥ 1 kHz) that are
 unnecessary for rendering and UI (typically 60 Hz). Decoupling these rates avoids
 unnecessary computational load on the rendering thread and supports faster-than-real-
 time batch execution without affecting visualization frame rate.
@@ -547,10 +589,12 @@ independently addable and removable Bevy plugin: (a) vehicle mesh and surface an
 (d) data overlays and HUD. Each plugin shall be enabled or disabled via scenario
 configuration without modifying any other plugin's source code.
 
-**Rationale:** Assigning each visual feature to an independent plugin allows
-visualization student teams to work in isolation, enables features to be enabled
-selectively to match system performance targets, and prevents merge conflicts between
-teams working on different features simultaneously.
+**Rationale:** Visualization plugins are layer 1 partitions within the visualization
+domain — the fractal partition pattern (SIM-SYS-004) applied to rendering. Assigning
+each visual feature to an independently replaceable plugin allows visualization student
+teams to work in isolation, enables features to be enabled selectively to match system
+performance targets, and prevents merge conflicts between teams working on different
+features simultaneously.
 
 **Verification Expectations:**
 - Pass: Removing `"trail"` from `[viz].plugins` in the scenario TOML disables the
@@ -592,23 +636,33 @@ maintaining independent subscriptions to the message bus.
 
 ### SIM-SYS-021 — UI Execution Control
 
-**Statement:** The user interface partition shall provide controls for at minimum the
-following simulation lifecycle operations: start, pause, resume, stop, and reset to
-initial conditions. These operations shall take effect within one physics tick of user
-activation.
+**Statement:** The user interface partition shall provide interactive controls for at
+minimum the following simulation lifecycle operations: start, pause, resume, stop, and
+reset to initial conditions. These controls shall emit `ExecutionStateRequest` messages
+on the simulation bus. The UI is one of potentially many sources of execution state
+transition requests; the orchestrator (`sim-app`) is the sole authority for evaluating
+and applying transitions (see SIM-SYS-041).
 
 **Rationale:** Execution control is the minimum viable interactive capability. Without
 it, the simulator cannot be used in classroom or training contexts where an instructor
 must interrupt or restart a run in response to student input or anomalous behavior.
+Decoupling the UI from direct state mutation ensures that execution state transitions
+from all sources (UI, partition events, scripted scenarios) flow through a single
+arbitration point.
 
 **Verification Expectations:**
-- Pass: Activating pause halts physics integration and GN&C updates; visualization
-  continues rendering the current frozen state.
+- Pass: Activating pause via the UI emits an `ExecutionStateRequest::Pause` that the
+  orchestrator applies within one physics tick, halting physics integration and GN&C
+  updates; visualization continues rendering the current frozen state.
 - Pass: Activating reset returns all vehicle states to their scenario-defined initial
   conditions and clears telemetry history.
+- Pass: An `ExecutionStateRequest::Stop` emitted by a partition event handler (not the
+  UI) produces the same execution state change as the UI stop button.
 - Fail: Any execution control operation requires more than one physics tick to take
   effect, as measured by the difference in published `PlantState` timestamps before
   and after the operation.
+- Fail: The UI partition directly mutates the execution state rather than emitting a
+  request on the bus.
 
 ---
 
@@ -619,9 +673,12 @@ must interrupt or restart a run in response to student input or anomalous behavi
 as an independently addable Bevy plugin. Additional UI panels shall be addable via
 scenario configuration without modifying existing panel source files.
 
-**Rationale:** Mirrors the visualization modularity requirement. Allows UI features to
-be developed, assigned, and graded independently, and allows laboratories embedding the
-framework to add domain-specific control panels without forking the core UI codebase.
+**Rationale:** UI panels are layer 1 partitions within the UI domain, mirroring
+the visualization modularity requirement — both are instances of the fractal partition
+pattern (SIM-SYS-004) applied within their respective layer 0 partitions. This allows
+UI features to be developed, assigned, and graded independently, and allows laboratories
+embedding the framework to add domain-specific control panels without forking the core
+UI codebase.
 
 **Verification Expectations:**
 - Pass: A new UI panel implemented as a `bevy_egui` plugin is activated by adding its
@@ -641,7 +698,8 @@ framework to add domain-specific control panels without forking the core UI code
 **Statement:** The system shall accept a TOML file as its primary runtime configuration
 interface. A scenario file shall fully specify: simulation parameters (timestep, bus
 mode), environment model list and per-model parameters, per-vehicle configuration
-(manifest path, fidelity tier, GN&C plugin path, initial conditions), active
+(manifest path, composition preset or inline sub-model selection, GN&C plugin path,
+initial conditions), active
 visualization plugins, and active UI panels.
 
 **Rationale:** A human-readable, file-based configuration surface separates operational
@@ -666,10 +724,10 @@ path to a base scenario file. Fields present in the inheriting file shall overri
 corresponding fields in the base. Fields absent from the inheriting file shall be
 inherited unchanged from the base.
 
-**Rationale:** Fidelity variants and vehicle configuration variants of the same scenario
-are typically small diffs against a common base. Inheritance allows these variants to be
-expressed minimally, keeping them automatically synchronized with base scenario changes
-and reducing the maintenance burden of scenario libraries.
+**Rationale:** Composition preset variants and vehicle configuration variants of the
+same scenario are typically small diffs against a common base. Inheritance allows these
+variants to be expressed minimally, keeping them automatically synchronized with base
+scenario changes and reducing the maintenance burden of scenario libraries.
 
 **Verification Expectations:**
 - Pass: A scenario file containing only `extends = "base.toml"` and a single overridden
@@ -682,27 +740,38 @@ and reducing the maintenance burden of scenario libraries.
 
 ---
 
-### SIM-SYS-025 — Named Fidelity Presets
+### SIM-SYS-025 — Named Composition Presets
 
-**Statement:** The scenario file shall support named fidelity presets (`"low"`, `"mid"`,
-`"high"`) resolvable to preset files in a configurable presets directory, as well as
-inline physics configuration tables that override or replace a named preset for an
-individual vehicle.
+**Statement:** The scenario file shall support named composition presets resolvable to
+preset files in a configurable presets directory. Presets shall be applicable to any
+fractally partitioned domain — physics (e.g., `"low"`, `"mid"`, `"high"`),
+visualization, GN&C, or any other partition that composes layer 1 sub-components.
+Inline configuration tables shall be supported to override or replace individual
+sub-model selections within a named preset without defining an entirely new preset.
 
-**Rationale:** Named presets give instructors a stable, communicable vocabulary for
-assigning simulation fidelity (e.g., "run your controller at mid fidelity"). Inline
-overrides allow individual sub-model substitution without defining an entirely new named
-preset.
+**Rationale:** Composition presets are a natural consequence of the fractal partition
+pattern: since every partition composes independently replaceable sub-components via
+the same compositor mechanism, a reusable named selection of those sub-components is
+useful at any layer and in any domain. Named presets give instructors a stable,
+communicable vocabulary (e.g., "run your controller at mid fidelity") while inline
+overrides allow individual sub-model substitution without defining an entirely new
+preset. Generalizing presets beyond physics ensures that the same composition mechanism
+serves visualization quality levels, GN&C estimator configurations, or any future
+domain without introducing a domain-specific preset system.
 
 **Verification Expectations:**
-- Pass: A vehicle configured with `fidelity = "mid"` produces the same behavior as a
+- Pass: A vehicle configured with `preset = "mid"` produces the same behavior as a
   vehicle configured with an inline table containing the fields defined in
-  `config/fidelity/mid.toml`.
+  `config/presets/physics/mid.toml`.
 - Pass: An inline override of a single field (e.g., `wind = "dryden"`) in an otherwise
-  `"mid"` fidelity vehicle activates only that sub-model difference, leaving all other
-  mid-fidelity sub-models unchanged.
-- Fail: The system accepts an unrecognized fidelity preset name without reporting an
-  error.
+  `"mid"` preset vehicle activates only that sub-model difference, leaving all other
+  sub-models selected by the preset unchanged.
+- Pass: A visualization preset (e.g., `[viz] preset = "minimal"`) selects a specific
+  set of visualization plugins, and inline overrides add or remove individual plugins
+  without replacing the entire preset.
+- Fail: The system accepts an unrecognized preset name without reporting an error.
+- Fail: The preset mechanism is available only for physics; other partitions require
+  a different mechanism to achieve named sub-component selections.
 
 ---
 
@@ -877,18 +946,18 @@ visualization stack ensures that recorded and live views are visually consistent
 ### SIM-SYS-035 — Event System Architecture
 
 **Statement:** The system shall provide a unified event system in which discrete events
-can be defined, armed, triggered, and handled at both the system level (layer 0) and the
-partition level (layer 1). The event model shall be structurally recursive: each partition
-(physics, GN&C, visualization, environment) shall define, arm, and handle events using
-the same primitives and interfaces available at the system level.
+can be defined, armed, triggered, and handled at both layer 0 (system level) and layer 1
+(partition level). Consistent with the fractal partition pattern (SIM-SYS-004), each
+partition (physics, GN&C, visualization, environment) shall define, arm, and handle
+events using the same primitives and interfaces available at the system level.
 
 **Rationale:** Mission timelines, failure injection, scenario scripting, and conditional
 logic all require a mechanism for scheduling and reacting to discrete occurrences during
-a simulation run. A recursive event model ensures that partition-specific events
-(e.g., a sensor failure in the plant model, a mode transition in GN&C, a camera cut in
-visualization) are expressed and managed with the same constructs as system-level events
-(e.g., simulation start, scenario phase transitions), avoiding redundant or incompatible
-mechanisms across partitions.
+a simulation run. The fractal partition pattern requires that the event system be
+uniform across layers: partition-specific events (e.g., a sensor failure in the plant
+model, a mode transition in GN&C, a camera cut in visualization) are expressed and
+managed with the same constructs as system-level events (e.g., simulation start, scenario
+phase transitions), avoiding redundant or incompatible mechanisms across partitions.
 
 **Verification Expectations:**
 - Pass: A system-level event and a partition-level event defined in the same scenario
@@ -905,16 +974,17 @@ mechanisms across partitions.
 
 ### SIM-SYS-036 — Time-triggered Events
 
-**Statement:** The event system shall support events triggered at a specified time. At
-layer 0 (system level), time-triggered events shall reference wall-clock time elapsed
-since simulation start. At layer 1 (partition and scenario level), time-triggered events
-shall reference mission scenario time as defined by the simulation clock.
+**Statement:** The event system shall support events triggered at a specified time.
+Consistent with the fractal partition pattern (SIM-SYS-004), time semantics vary by
+layer: at layer 0 (system level), time-triggered events shall reference wall-clock time
+elapsed since simulation start; at layer 1 (partition level), time-triggered events shall
+reference mission scenario time as defined by the simulation clock.
 
 **Rationale:** Wall-clock triggers at layer 0 support infrastructure concerns such as
 telemetry snapshots, periodic health checks, and real-time synchronization boundaries
 that are independent of simulation time scaling. Scenario-time triggers at layer 1
-support mission timeline events (e.g., "ignite second stage at T+120s") that must track
-the simulated clock, including during time-scaled or paused execution.
+(partition level) support mission timeline events (e.g., "ignite second stage at T+120s")
+that must track the simulated clock, including during time-scaled or paused execution.
 
 **Verification Expectations:**
 - Pass: A layer 0 event configured to trigger at wall-clock T+5s fires at approximately
@@ -952,6 +1022,9 @@ procedural checks in partition source code.
 - Pass: Condition predicates reference signals by name as published on the bus or defined
   in partition state, without requiring the event author to specify memory addresses or
   internal data paths.
+- Pass: A condition-triggered event with action `"sim_stop"` conditioned on
+  `altitude_msl < 0.0` causes the orchestrator to transition the simulation to the
+  Stopped state on the first tick the condition is met (see SIM-SYS-042).
 - Fail: Condition-triggered events can only monitor system-level signals; partition-
   internal state is not observable by the event system.
 
@@ -960,18 +1033,20 @@ procedural checks in partition source code.
 ### SIM-SYS-038 — Partition-scoped Event Arming
 
 **Statement:** Each partition shall be capable of defining and arming events scoped to
-its own domain. Partition-scoped events shall be evaluated against that partition's
-internal signals and shall invoke handlers within the partition's execution context. The
-mechanism for defining and arming events shall be uniform across all partitions: physics,
-GN&C, visualization, and environment.
+its own domain (layer 1). Partition-scoped events shall be evaluated against that
+partition's internal signals and shall invoke handlers within the partition's execution
+context. Consistent with the fractal partition pattern (SIM-SYS-004), the mechanism
+for defining and arming events shall be uniform across all partitions and identical in
+structure to system-level (layer 0) event definitions.
 
-**Rationale:** Partitions contain domain-specific state that may not be published on the
-inter-partition bus but is meaningful for triggering domain-specific behavior. A GN&C
-partition may arm an event on an internal estimator convergence metric; a plant model may
-arm an event on a structural load threshold; a visualization partition may arm a camera
-transition on proximity to a waypoint. Requiring all such events to be defined at the
-system level would violate partition encapsulation and create coupling between the event
-configuration and partition internals.
+**Rationale:** The fractal partition pattern requires that each partition have the same
+event capabilities as the system level. Partitions contain domain-specific state that may
+not be published on the inter-partition bus but is meaningful for triggering domain-
+specific behavior. A GN&C partition may arm an event on an internal estimator convergence
+metric; a plant model may arm an event on a structural load threshold; a visualization
+partition may arm a camera transition on proximity to a waypoint. Requiring all such
+events to be defined at the system level would violate partition encapsulation and create
+coupling between the event configuration and partition internals.
 
 **Verification Expectations:**
 - Pass: A GN&C partition arms an event on an internal signal not published to the bus,
@@ -980,6 +1055,9 @@ configuration and partition internals.
   using the same event definition schema, and both trigger correctly without interference.
 - Pass: A partition-scoped event is defined in the partition's section of the scenario
   TOML and does not require modification to any other partition's configuration.
+- Pass: A physics partition event armed on an internal structural load signal fires
+  a `"sim_stop"` action that the orchestrator applies, halting the simulation without
+  UI involvement (see SIM-SYS-042).
 - Fail: Arming an event within a partition requires modifying `sim-core` or the system-
   level event dispatcher source code.
 
@@ -987,16 +1065,20 @@ configuration and partition internals.
 
 ### SIM-SYS-039 — Event Definition in Scenario Configuration
 
-**Statement:** Events shall be declaratively defined in the scenario TOML file. System-
-level events shall be defined in a top-level `[[events]]` array. Partition-scoped events
-shall be defined within the corresponding partition's configuration section (e.g.,
-`[[physics.events]]`, `[[gnc.events]]`, `[[viz.events]]`). Each event entry shall specify
-a trigger (time or condition), an action identifier, and optional parameters.
+**Statement:** Events shall be declaratively defined in the scenario TOML file.
+Layer 0 (system-level) events shall be defined in a top-level `[[events]]` array.
+Layer 1 (partition-level) events shall be defined within the corresponding partition's
+configuration section (e.g., `[[physics.events]]`, `[[gnc.events]]`, `[[viz.events]]`).
+Each event entry shall specify a trigger (time or condition), an action identifier, and
+optional parameters. Consistent with the fractal partition pattern (SIM-SYS-004), the
+event entry schema shall be identical at both layers.
 
 **Rationale:** Declarative event definition in the scenario file keeps mission timelines
-version-controlled, portable, and inspectable alongside other scenario configuration. It
-avoids hard-coding event logic in partition source code and allows instructors to modify
-mission event sequences without recompilation.
+version-controlled, portable, and inspectable alongside other scenario configuration.
+The fractal partition pattern requires that the same event schema be usable at every
+layer, so that scenario authors learn one event syntax and apply it uniformly. It avoids
+hard-coding event logic in partition source code and allows instructors to modify mission
+event sequences without recompilation.
 
 **Verification Expectations:**
 - Pass: A scenario TOML containing a `[[physics.events]]` entry with a time trigger and
@@ -1012,6 +1094,148 @@ mission event sequences without recompilation.
 
 ---
 
+### SIM-SYS-040 — Simulation Execution State Machine
+
+**Statement:** The system shall define a formal execution state machine in `sim-core`
+with the following states and transitions:
+
+| State     | Valid Transitions                        |
+|-----------|------------------------------------------|
+| Idle      | → Running (start)                        |
+| Running   | → Paused (pause), → Stopped (stop)       |
+| Paused    | → Running (resume), → Stopped (stop)     |
+| Stopped   | → Idle (reset)                           |
+
+The current execution state shall be available as a named resource or type in `sim-core`
+accessible to all partitions. No partition shall maintain a private copy of the execution
+state that diverges from the authoritative value held by the orchestrator.
+
+**Rationale:** In a fractally partitioned system, any partition at any layer may need to
+observe or influence the simulation lifecycle. Execution state is currently implicit in
+SIM-SYS-021's description of UI controls. Without a formal state machine, partitions
+cannot consistently reason about valid transitions, detect invalid requests, or
+synchronize their behavior with the global execution lifecycle. An explicit, centrally
+defined state machine prevents undefined behavior when multiple sources (UI, events,
+partition logic) attempt to influence execution state.
+
+**Verification Expectations:**
+- Pass: The `sim-core` crate exports an enum or equivalent type representing the four
+  execution states (Idle, Running, Paused, Stopped) and a function or method that
+  validates whether a requested transition is valid from the current state.
+- Pass: Requesting an invalid transition (e.g., Running → Idle) returns an error or
+  rejection rather than silently succeeding.
+- Pass: All partitions read execution state from the same `sim-core` resource; no
+  partition defines its own execution state enum.
+- Fail: The execution state is represented as a bare boolean or integer flag without
+  enforced transition semantics.
+
+---
+
+### SIM-SYS-041 — Execution State Transition Requests
+
+**Statement:** Any partition shall be capable of requesting a simulation execution state
+transition by emitting an `ExecutionStateRequest` message on the simulation bus. The
+`ExecutionStateRequest` type shall be defined in `sim-core` and shall carry the requested
+transition and the identity of the requesting partition. The orchestrator (`sim-app`)
+shall be the sole authority for evaluating and applying state transitions according to
+the state machine defined in SIM-SYS-040. Requests that represent invalid transitions
+shall be logged with the requesting partition's identity and ignored. Valid transitions
+shall take effect within one physics tick of receipt.
+
+**Rationale:** The fractal partition pattern (SIM-SYS-004) implies that partitions at
+any layer may generate events that affect execution state. Multiple sources may
+legitimately need to change execution state: the UI for interactive control, a plant
+model detecting a safety limit exceedance, a GN&C event handler reaching a scripted
+pause point, or a condition-triggered event firing a stop. Routing all requests through
+a single arbitration point (the orchestrator) prevents race conditions, ensures
+transition validity, and provides a single audit point for execution state changes.
+
+**Verification Expectations:**
+- Pass: A physics partition emitting `ExecutionStateRequest::Stop` during a Running
+  simulation causes the orchestrator to transition to the Stopped state within one
+  physics tick.
+- Pass: A GN&C partition emitting `ExecutionStateRequest::Pause` during a Running
+  simulation causes the orchestrator to transition to the Paused state within one
+  physics tick.
+- Pass: An `ExecutionStateRequest::Resume` emitted while the simulation is in the
+  Running state is logged as an invalid transition and ignored; the simulation continues
+  running without interruption.
+- Pass: Each applied transition is logged with the identity of the partition that
+  requested it.
+- Fail: A partition directly mutates the execution state resource without emitting an
+  `ExecutionStateRequest` on the bus.
+- Fail: Two partitions emitting conflicting requests in the same tick causes undefined
+  behavior (see SIM-SYS-043 for conflict resolution).
+
+---
+
+### SIM-SYS-042 — Execution State Change as Event Action
+
+**Statement:** The event system shall support `"sim_pause"`, `"sim_stop"`, and
+`"sim_resume"` as built-in action identifiers available at both layer 0 (system level)
+and layer 1 (partition level). When an event with one of these action identifiers fires, the event
+dispatcher shall emit the corresponding `ExecutionStateRequest` on the simulation bus.
+These actions shall be usable with both time-triggered and condition-triggered events.
+
+**Rationale:** Execution state changes are among the most common event-driven actions in
+mission simulation. Encoding a GN&C pause point, a plant safety stop, or a scenario
+phase transition as event actions keeps the logic declarative and configurable in the
+scenario TOML, avoiding hard-coded procedural checks in partition source code. Connecting
+the event system to the execution state request mechanism (SIM-SYS-041) ensures all
+event-driven state changes flow through the same arbitration path as UI-initiated
+changes.
+
+**Verification Expectations:**
+- Pass: A scenario TOML entry `[[gnc.events]]` with `trigger = { time = 30.0 }` and
+  `action = "sim_pause"` causes the simulation to pause when the GN&C partition's
+  simulation clock reaches 30 seconds.
+- Pass: A scenario TOML entry `[[physics.events]]` with
+  `trigger = { condition = "structural_load > 9.0" }` and `action = "sim_stop"` causes
+  the simulation to stop when the monitored signal exceeds the threshold.
+- Pass: A system-level `[[events]]` entry with `action = "sim_resume"` and a time
+  trigger successfully resumes a paused simulation at the specified wall-clock time.
+- Pass: The `ExecutionStateRequest` emitted by an event action is indistinguishable from
+  one emitted by the UI or by partition code directly; the orchestrator processes it
+  identically.
+- Fail: Execution state change actions require partition source code modifications
+  rather than scenario TOML configuration.
+
+---
+
+### SIM-SYS-043 — Execution State Transition Conflict Resolution
+
+**Statement:** When the orchestrator receives multiple `ExecutionStateRequest` messages
+within the same physics tick that request conflicting transitions, it shall apply the
+following deterministic priority order: (1) Stop takes priority over all other requests.
+(2) Pause takes priority over Resume. (3) Among requests of equal priority, the first
+received shall be applied. All received requests and the resolution outcome shall be
+logged with the requesting partition identities.
+
+**Rationale:** In a fractally partitioned system, any partition at any layer may
+generate events that request execution state changes. Concurrent events may independently
+request conflicting transitions in the same tick — for example, a GN&C event requesting
+pause while a physics safety limit simultaneously requests stop. Without a deterministic
+resolution policy, the resulting execution state would depend on message ordering, which
+varies with transport mode and scheduling. Prioritizing stop over pause reflects the
+principle that safety-critical transitions should not be overridden by less severe
+requests.
+
+**Verification Expectations:**
+- Pass: When a physics partition emits `ExecutionStateRequest::Stop` and a GN&C
+  partition emits `ExecutionStateRequest::Pause` in the same tick, the orchestrator
+  transitions to Stopped.
+- Pass: When a UI partition emits `ExecutionStateRequest::Resume` and a GN&C event
+  emits `ExecutionStateRequest::Pause` in the same tick, the orchestrator transitions
+  to Paused (if currently Paused, the pause wins and the state remains Paused).
+- Pass: The orchestrator log for the tick includes both requests and identifies which
+  was applied and which was superseded, with partition identities.
+- Fail: Conflicting requests in the same tick produce non-deterministic behavior
+  depending on transport mode or thread scheduling.
+- Fail: A lower-priority request silently overrides a higher-priority request without
+  logging.
+
+---
+
 ## 16. Verification and Traceability
 
 ---
@@ -1023,9 +1247,11 @@ containing requirements that individually trace to one or more SIM-SYS identifie
 this document. No partition-level requirement shall exist without a parent SIM-SYS
 requirement.
 
-**Rationale:** Bidirectional traceability between system and partition requirements
-ensures that all system intents are verifiably allocated to an implementing partition,
-and that no partition-level requirement is orphaned from system-level intent.
+**Rationale:** The fractal partition pattern requires traceability at every layer of
+decomposition. Bidirectional traceability between layer 0 (system) and layer 1
+(partition) requirements ensures that all system intents are verifiably allocated to an
+implementing partition, and that no partition-level requirement is orphaned from
+system-level intent.
 
 **Verification Expectations:**
 - Pass: Every requirement in each partition SPECIFICATION.md includes a `Traces to:`
@@ -1068,14 +1294,14 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-001 | Four-partition Architecture        | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-002 | Partition Independence             | TF-SRS-006                |
 | SIM-SYS-003 | Inter-partition Interface Ownership| TF-SRS-005                |
-| SIM-SYS-004 | Recursive Partition Pattern        | TF-SRS-001 through 004    |
+| SIM-SYS-004 | Fractal Partition Pattern           | TF-SRS-001 through 004    |
 | SIM-SYS-005 | Transport Abstraction              | TF-SRS-005                |
 | SIM-SYS-006 | Typed Message Contracts            | TF-SRS-005                |
 | SIM-SYS-007 | Multi-vehicle Support              | TF-SRS-006                |
 | SIM-SYS-008 | Vehicle Identification             | TF-SRS-005                |
 | SIM-SYS-009 | World State Broadcast              | TF-SRS-005                |
 | SIM-SYS-010 | Dynamic Vehicle Lifecycle          | TF-SRS-006                |
-| SIM-SYS-011 | Physics Fidelity Tiers             | TF-SRS-001                |
+| SIM-SYS-011 | Physics Sub-model Composition      | TF-SRS-001                |
 | SIM-SYS-012 | Environment Model Composability    | TF-SRS-001                |
 | SIM-SYS-013 | Configurable Simulation Rate       | TF-SRS-001, TF-SRS-006    |
 | SIM-SYS-014 | Stable GN&C ABI                    | TF-SRS-002A               |
@@ -1089,7 +1315,7 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-022 | UI Extensibility                   | TF-SRS-004                |
 | SIM-SYS-023 | TOML Scenario File                 | TF-SRS-006                |
 | SIM-SYS-024 | Scenario Inheritance               | TF-SRS-006                |
-| SIM-SYS-025 | Named Fidelity Presets             | TF-SRS-001, TF-SRS-006    |
+| SIM-SYS-025 | Named Composition Presets          | TF-SRS-001 through 006    |
 | SIM-SYS-026 | Implementation Language            | TF-SRS-001 through 006    |
 | SIM-SYS-027 | Crate Publishability               | TF-SRS-006                |
 | SIM-SYS-028 | Independent GN&C ABI Versioning    | TF-SRS-002A               |
@@ -1104,3 +1330,7 @@ reviews and to identify which tests must be updated when a requirement changes.
 | SIM-SYS-037 | Condition-triggered Events         | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-038 | Partition-scoped Event Arming      | TF-SRS-001 through 004    |
 | SIM-SYS-039 | Event Definition in Scenario Config| TF-SRS-006                |
+| SIM-SYS-040 | Simulation Execution State Machine | TF-SRS-005                |
+| SIM-SYS-041 | Execution State Transition Requests| TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-042 | Execution State Change as Event Action | TF-SRS-005, TF-SRS-006 |
+| SIM-SYS-043 | Execution State Transition Conflict Resolution | TF-SRS-006 |

@@ -154,19 +154,26 @@ document takes one aspect of the pattern — an aspect summarized in the section
 and explores it in full depth: the problems it creates, the design choices it forces,
 and the tradeoffs involved.
 
-### Inter-partition communication
+### Communication
 
-The contract-centric design summarized above (contracts in `sim-core`, star topology,
-no partition-to-partition imports) creates a specific communication architecture. How do
-partitions exchange data without coupling? How does the bus route typed messages? How
-does the shared execution state machine synchronize across transport modes?
+The contract-centric design summarized above creates a communication architecture with
+two dimensions: horizontal (peer partitions at the same layer) and vertical (compositors
+and their child partitions across layers). Both use the same principles — contracts in
+one place, typed messages, transport independence — but the mechanisms differ because the
+relationships differ.
 
-[Inter-partition Communication](inter-partition-communication.md) explains the
-communication model in detail: the contract crate's structural role, typed message
-channels, the three transport modes and their equivalence guarantee, and the shared
-state machine synchronization protocol. Where this document says "contracts define what
-a partition may consume," that document shows the mechanics of how consumption works
-across process and network boundaries.
+[Communication in the Fractal Partition Pattern](communication-in-the-fractal-partition-pattern.md)
+establishes the shared principles, draws the distinction between horizontal and vertical
+communication, and points to the two detailed companion documents:
+
+- [Inter-partition Communication](inter-partition-communication.md) — the horizontal
+  model: contract crate structure, typed message channels, transport modes, shared state
+  machines, and the request/arbitration pattern.
+
+- [Inter-layer Communication](inter-layer-communication.md) — the vertical model:
+  layer-scoped buses, compositor runtime role, downward bus broadcast, upward request
+  relay, compositor relay authority, recursive state contributions, fault handling, and
+  global signals.
 
 ### Testing
 

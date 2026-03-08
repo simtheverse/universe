@@ -87,7 +87,7 @@ operational mission data are outside the scope of this specification.
 | Term              | Definition                                                                 |
 |-------------------|----------------------------------------------------------------------------|
 | ABI               | Application Binary Interface — the binary-level contract for a shared library |
-| Compositor        | A component that selects and assembles implementations at startup          |
+| Compositor        | A component that selects and assembles partition implementations at startup and, at runtime, owns the layer's bus instance, drives partition execution via trait calls, publishes shared context on the bus, arbitrates requests, and relays inter-layer messages to the outer bus with authority to filter, transform, or suppress |
 | Contract crate    | A Rust crate that defines traits and data types but contains no implementation |
 | Diátaxis          | A documentation framework organizing content into four quadrants by user need: tutorials (learning-oriented), how-to guides (task-oriented), reference (information-oriented), and explanation (understanding-oriented). See SIM-SYS-033 |
 | DoF               | Degrees of Freedom                                                         |
@@ -107,6 +107,9 @@ operational mission data are outside the scope of this specification.
 | Scenario          | A layer 1 composition fragment describing mission-level configuration: vehicle definitions, physics sub-model selections, environment models, events, and initial conditions. A session composes one or more scenarios |
 | Session           | The layer 0 composition fragment describing a simulation run: transport mode, timing parameters, active partitions, and which scenarios to compose. A session is the top-level entry point for the compositor |
 | State snapshot    | A composition fragment produced by capturing the complete simulation state at a point in time. A state snapshot is not a distinct system primitive — it is a composition fragment whose fields happen to have been machine-generated rather than hand-authored. Snapshots are loadable, inheritable, and overridable using the same mechanisms as any other composition fragment (see SIM-SYS-044) |
+| Global signal     | A safety-critical signal type declared in the outermost contract crate (`sim-core`) that bypasses the compositor relay chain and reaches the orchestrator directly, regardless of the emitting partition's layer depth. Reserved for scenarios where compositor suppression would be unsafe (e.g., emergency stop, hardware fault). See SIM-SYS-060 |
+| Layer-scoped bus  | A bus instance owned by the compositor at a given layer, connecting that layer's partitions. Each compositor owns a separate bus instance; sub-partitions publish only to their layer's bus, not to buses at other layers. Inter-layer communication occurs through compositor relay. See SIM-SYS-055 |
+| Relay authority   | The compositor's right to decide whether a message received on its inner bus is forwarded to the outer bus. The compositor may relay as-is, transform, suppress, or aggregate messages before re-emitting them. See SIM-SYS-057 |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
 | VehicleTypeId     | A stable string identifier for a vehicle design (e.g., `"cessna172"`)     |
 | WGS84             | World Geodetic System 1984 — standard geodetic reference frame             |
@@ -250,19 +253,29 @@ layer's specs, propagating traceability and structural discipline to arbitrary d
 **Statement:** The system shall support at minimum three inter-partition communication
 modes: (a) in-process synchronous channels, (b) asynchronous message-passing across
 threads, and (c) network-based publish-subscribe over a configurable endpoint. The active
-mode shall be selectable at runtime via scenario configuration without recompilation.
+mode shall be selectable at runtime via configuration without recompilation. Consistent
+with the fractal partition pattern (SIM-SYS-004), each compositor at every layer owns a
+bus instance for its partitions (see SIM-SYS-055). Bus instances at different layers are
+independent and may use different transport modes — the layer 0 bus might use network
+transport while a layer 1 bus uses in-process transport. The transport independence
+guarantee (identical results across modes) applies per bus instance.
 
 **Rationale:** In-process channels minimize latency for single-machine development.
 Asynchronous channels support partitions running on separate threads at different update
 rates. Network-based transport enables distributed execution across machines and
 integration with external tools. No single mode satisfies all deployment contexts.
+Layer-scoped bus instances allow transport mode to be selected independently at each
+layer, matching the deployment needs of each compositor's partitions without imposing a
+system-wide choice.
 
 **Verification Expectations:**
 - Pass: The same scenario executes to completion under all three transport modes with
   identical final vehicle state (within floating-point determinism limits) when run on
   a single machine.
-- Pass: Switching transport mode requires only a change to the `[sim]` section of the
-  scenario TOML; no source files are modified.
+- Pass: Switching transport mode requires only a change to the configuration for the
+  relevant layer; no source files are modified.
+- Pass: A layer 0 bus configured for network transport and a layer 1 bus configured for
+  in-process transport operate correctly in the same simulation run.
 - Fail: A partition contains a compile-time import or branch that is specific to one
   transport mode (i.e., transport choice is not fully abstracted behind the `SimBus`
   trait).
@@ -333,7 +346,240 @@ the same pattern.
 
 ---
 
-## 6. Multi-vehicle Operation
+## 6. Inter-layer Communication
+
+---
+
+### SIM-SYS-055 — Layer-scoped Bus
+
+**Statement:** Each compositor shall own a bus instance for its layer's partitions.
+The layer 0 orchestrator owns the layer 0 bus; a compositor at layer 1 owns a layer 1
+bus for its sub-partitions; the pattern continues at deeper layers. Bus instances at
+different layers are independent: they may use different transport modes, and a
+sub-partition at layer N publishes only to the layer N bus, never to a bus at any other
+layer. Inter-layer communication between buses occurs exclusively through compositor
+relay (SIM-SYS-057) or global signals (SIM-SYS-060).
+
+**Rationale:** Layer-scoped buses preserve the encapsulation guarantee of the fractal
+partition pattern (SIM-SYS-004). The outer layer sees its partitions as opaque units —
+it does not observe messages from sub-partitions and cannot depend on a partition's
+internal decomposition. A physics partition that decomposes into atmosphere,
+aerodynamics, and gravity at layer 1 looks identical on the layer 0 bus to a monolithic
+physics partition. This ensures that replacing a partition's internal structure does not
+change the messages visible on the outer bus, maintaining the replaceability guarantee.
+Independent transport modes per layer allow deployment flexibility — the layer 0 bus can
+use network transport for distributed execution while a layer 1 bus uses in-process
+transport for tightly coupled sub-partitions.
+
+**Verification Expectations:**
+- Pass: A compositor at layer 1 creates and owns a bus instance that connects its
+  sub-partitions; this bus is distinct from the layer 0 bus.
+- Pass: A sub-partition at layer 1 publishes a typed message that is received by its
+  peers on the layer 1 bus but is not visible on the layer 0 bus.
+- Pass: The layer 0 bus and a layer 1 bus operate with different transport modes in the
+  same simulation run without interference.
+- Fail: A sub-partition at layer 1 or deeper holds a reference to or publishes directly
+  on a bus at a different layer.
+- Fail: Replacing a partition's internal decomposition (adding or removing
+  sub-partitions) changes the set of messages visible on the outer bus.
+
+---
+
+### SIM-SYS-056 — Compositor Runtime Role
+
+**Statement:** The compositor at each layer shall be active at runtime, not only at
+assembly time. Its runtime responsibilities shall include: (a) driving partition
+execution by calling lifecycle trait methods (`init`, `step`, `shutdown`) on each
+partition in a controlled order; (b) owning the layer's bus instance and publishing
+shared context — WorldState, execution state, environment context — as typed messages
+on that bus; (c) receiving and arbitrating requests from partitions on its bus, acting
+as the single owner for shared state machines at that layer (SIM-SYS-046); (d) relaying
+inter-layer requests to the outer bus according to its relay authority (SIM-SYS-057);
+and (e) catching and handling faults from its partitions (SIM-SYS-058).
+
+**Rationale:** The existing specification describes the compositor's assembly-time role
+(selecting and instantiating partition implementations) but leaves its runtime
+communication responsibilities implicit. Making these explicit is necessary because the
+compositor sits at the boundary between layers: it is simultaneously the bus owner for
+its inner layer (role a–c) and a partition on the outer layer (role d). Without a
+defined runtime role, the compositor's responsibilities for relay, fault handling, and
+downward data broadcast are ambiguous. The principled split is: trait calls for
+imperative lifecycle control (the compositor controls execution order), bus broadcast for
+shared context (partitions subscribe to typed messages regardless of source), and bus
+requests for upward communication (partitions emit, compositor arbitrates).
+
+**Verification Expectations:**
+- Pass: The compositor calls `step()` on each partition in a defined order; partitions
+  do not self-schedule.
+- Pass: Shared context (WorldState, execution state) is available to partitions as typed
+  messages on the layer's bus, published by the compositor.
+- Pass: A partition consumes shared context using the same bus subscription mechanism it
+  uses for peer data — there is no distinct mechanism for compositor-originated vs.
+  peer-originated data.
+- Pass: The compositor receives `ExecutionStateRequest` messages on its bus and
+  arbitrates them as the single owner at its layer.
+- Fail: A compositor is inert after assembly — it does not participate in runtime
+  communication or bus management.
+- Fail: Shared context is passed to partitions exclusively through trait method
+  arguments, preventing uniform bus-based consumption.
+
+---
+
+### SIM-SYS-057 — Compositor Relay Authority
+
+**Statement:** When a compositor receives a request on its inner bus that is relevant to
+the outer layer — such as an `ExecutionStateRequest` that must reach the orchestrator —
+the compositor shall act as a relay gateway. The compositor shall have full authority
+over what crosses its layer boundary: it may relay the request as-is, transform it
+(adding context, changing the request type), suppress it (handling internally without
+forwarding), or aggregate multiple requests from a single tick into one consolidated
+message. Inter-layer requests propagate through the relay chain — each compositor in the
+chain independently decides whether to relay — until the request reaches the layer 0
+orchestrator for final arbitration.
+
+**Rationale:** Compositor relay authority preserves the encapsulation guarantee: the
+outer layer sees only what the compositor's contract promises, regardless of internal
+events. Without relay authority, any inner request would automatically appear on the
+outer bus, creating an implicit dependency on the partition's internal structure. A
+compositor that relays everything transparently is making a deliberate choice, not
+following a default. The relay chain also provides a natural audit point at each layer
+boundary, and allows compositors to handle certain situations locally (e.g., falling back
+to an alternative sub-partition implementation) without propagating to the outer layer.
+
+**Verification Expectations:**
+- Pass: A sub-partition emitting `ExecutionStateRequest::Stop` on a layer 1 bus causes
+  the compositor to receive the request and emit a corresponding request on the layer 0
+  bus; the orchestrator arbitrates the relayed request.
+- Pass: A compositor suppresses an internal request (e.g., by switching to a fallback
+  implementation) without any message appearing on the outer bus.
+- Pass: A compositor transforms a request before relaying — for example, adding context
+  about which sub-partition originated the request.
+- Pass: The relay chain operates correctly through multiple layers: a layer 2 request
+  relayed by the layer 1 compositor, then relayed by the layer 0 partition, reaches the
+  orchestrator.
+- Fail: A request from a sub-partition appears on the outer bus without passing through
+  the compositor's relay logic.
+- Fail: The compositor is a transparent pipe with no ability to filter, transform, or
+  suppress inter-layer messages.
+
+---
+
+### SIM-SYS-058 — Compositor Fault Handling
+
+**Statement:** When a sub-partition faults during execution — returning an error from a
+trait method call, panicking, or timing out — the compositor at that layer shall be
+responsible for the response. Faults are a compositor-internal concern; there shall be no
+fault-specific bus channel or message type. The compositor shall catch the fault and
+decide the response: emit a typed request on its bus (e.g., `ExecutionStateRequest::Stop`
+with fault context), fall back to an alternative implementation, or log and continue.
+The outer layer shall see only the compositor's decision (a normal typed message), not
+the raw fault from the sub-partition.
+
+**Rationale:** A separate fault channel or fault message type would create a parallel
+communication path with its own transport, relay, and arbitration semantics — complexity
+that is unnecessary because the compositor already has a direct call-and-return
+relationship with its sub-partitions. The compositor's response to a fault is a domain
+decision (stop, fall back, continue), not a routing decision, and belongs in compositor
+logic rather than bus infrastructure. Exposing raw faults to the outer layer would break
+encapsulation: the outer layer would see implementation details of a partition's internal
+decomposition. If richer fault context is needed at the outer layer for diagnostics, the
+compositor can include it in the payload of its typed request or publish a diagnostic
+message — using the existing message system, not a new fault channel.
+
+**Verification Expectations:**
+- Pass: A sub-partition returning an error from `step()` is caught by the compositor;
+  the compositor emits `ExecutionStateRequest::Stop` on its bus, which is relayed to the
+  orchestrator through the normal relay chain.
+- Pass: A compositor with an available fallback implementation switches to it after a
+  sub-partition fault, and the outer layer observes no interruption.
+- Pass: The compositor logs the fault with the faulting sub-partition's identity and the
+  error details, regardless of the chosen response.
+- Fail: A sub-partition fault propagates directly to the outer layer as a raw error,
+  panic, or unhandled exception visible outside the compositor.
+- Fail: A dedicated fault bus or fault message channel exists alongside the regular bus.
+
+---
+
+### SIM-SYS-059 — Recursive State Contribution
+
+**Statement:** A partition that is itself a compositor shall implement the state
+contribution contract (SIM-SYS-044) by recursively invoking `contribute_state()` on its
+sub-partitions and assembling their contributions into a nested TOML fragment. The
+compositor's contribution shall include both its own internal state and the nested
+contributions of its children, preserving the hierarchical structure. Loading a snapshot
+shall reverse the process: the compositor shall decompose its fragment section along the
+same boundaries used for assembly and delegate each sub-section to the corresponding
+sub-partition's `load_state()` implementation. The outer layer shall receive one
+contribution per partition — it shall not observe the internal decomposition.
+
+**Rationale:** State snapshots must capture state at every layer without breaking
+encapsulation. If the orchestrator needed to know about sub-partitions to collect their
+state, replacing a partition's internal structure would require modifying the
+orchestrator. Recursive delegation through compositors ensures that each layer handles
+its own collection and assembly. Nested TOML fragments preserve compatibility with the
+`extends` and override mechanisms (SIM-SYS-024, SIM-SYS-025) — a snapshot fragment can
+be used as a configuration input, and state values at any depth can be overridden using
+the same composition semantics as all other configuration.
+
+**Verification Expectations:**
+- Pass: A compositor at layer 1 calls `contribute_state()` on each of its sub-partitions
+  and assembles the results into a nested TOML fragment under its partition's key.
+- Pass: The orchestrator receives one state contribution per layer 0 partition; it does
+  not observe whether the contribution was assembled from sub-partitions or produced
+  monolithically.
+- Pass: A state snapshot captured from a compositor partition, when loaded via
+  `load_state()`, correctly restores the state of each sub-partition through recursive
+  decomposition.
+- Pass: The nested fragment structure is compatible with `extends` inheritance — a
+  fragment that extends a snapshot can override a specific sub-partition's state value.
+- Fail: The orchestrator must enumerate or know about sub-partitions to capture a
+  complete state snapshot.
+- Fail: State contributions from sub-partitions are flat key-value pairs rather than
+  nested TOML sections, breaking composition fragment compatibility.
+
+---
+
+### SIM-SYS-060 — Global Signals
+
+**Statement:** The outermost contract crate (`sim-core`) may declare a set of **global
+signal types** — safety-critical signals that bypass the compositor relay chain and reach
+the orchestrator directly, regardless of the emitting partition's layer depth. Any
+partition at any layer depth may emit a declared global signal. Global signals shall
+carry minimal payload: a signal type identifier, a reason string, and the identity of
+the emitting partition. Every global signal emission shall be logged with the emitting
+partition's identity and layer depth. The set of global signal types shall be small,
+stable, declared only in `sim-core`, and reserved for scenarios where compositor relay
+suppression would be unsafe (e.g., emergency stop, hardware fault).
+
+**Rationale:** The compositor relay chain (SIM-SYS-057) is the correct default for
+inter-layer communication — it preserves encapsulation and gives each compositor control
+over what crosses its boundary. However, for safety-critical signals, the cost of a
+compositor inadvertently suppressing or delaying a relay exceeds the cost of bypassing
+encapsulation. A hardware fault or emergency condition detected at any layer depth must
+reach the orchestrator without depending on every compositor in the chain making the
+correct relay decision. Global signals are the escape hatch: declared sparingly,
+constrained to minimal payload, and audited. They complement the relay chain rather than
+replacing it — normal inter-layer communication uses compositor relay, safety-critical
+communication uses global signals.
+
+**Verification Expectations:**
+- Pass: A sub-partition at layer 2 emitting `GlobalSignal::EmergencyStop` causes the
+  orchestrator to receive the signal without any intermediate compositor relay step.
+- Pass: Global signal types are declared in `sim-core` and only in `sim-core`; no
+  partition or layer 1 contract module declares its own global signal types.
+- Pass: Every global signal emission is logged with the emitting partition's identity
+  and layer depth.
+- Pass: A global signal carries only a type identifier, reason string, and emitter
+  identity — not arbitrary data payloads.
+- Fail: A compositor at an intermediate layer intercepts or suppresses a global signal.
+- Fail: Global signals are used for non-safety-critical communication that could be
+  handled through the normal compositor relay chain.
+- Fail: The set of global signal types is large or changes frequently, indicating misuse
+  as a general communication mechanism.
+
+---
+
+## 7. Multi-vehicle Operation
 
 ---
 
@@ -424,7 +670,7 @@ restart. It also supports incremental scenario construction during interactive u
 
 ---
 
-## 7. Physics and Environment
+## 8. Physics and Environment
 
 ---
 
@@ -515,7 +761,7 @@ time batch execution without affecting visualization frame rate.
 
 ---
 
-## 8. GN&C Plugin Interface
+## 9. GN&C Plugin Interface
 
 ---
 
@@ -586,7 +832,7 @@ subscriptions.
 
 ---
 
-## 9. Vehicle Definition
+## 10. Vehicle Definition
 
 ---
 
@@ -636,7 +882,7 @@ visual state output ensures rendering fidelity is bounded only by physics fideli
 
 ---
 
-## 10. Visualization
+## 11. Visualization
 
 ---
 
@@ -689,7 +935,7 @@ maintaining independent subscriptions to the message bus.
 
 ---
 
-## 11. User Interface
+## 12. User Interface
 
 ---
 
@@ -748,7 +994,7 @@ UI codebase.
 
 ---
 
-## 12. Configuration and Composition
+## 13. Configuration and Composition
 
 ---
 
@@ -888,13 +1134,17 @@ point during execution and emitting it as a TOML composition fragment. The contr
 crate for each layer shall define a state contribution contract that each partition at
 that layer implements. The orchestrator shall assemble the complete snapshot by invoking
 each partition's state contribution implementation and composing the results into a
-single fragment. Loading a snapshot shall use the same contract in reverse: the
-orchestrator decomposes the fragment and passes each partition's section to that
-partition's load implementation. The resulting snapshot fragment shall be a valid
-composition fragment loadable by the same mechanism used for sessions and scenarios
-(SIM-SYS-023). The snapshot shall include the current simulation time, execution state,
-and the complete internal state of each partition for all active vehicles. The snapshot
-fragment shall be human-readable, inspectable, and editable using standard text tools.
+single fragment. A partition that is itself a compositor shall implement the state
+contribution contract by recursively invoking `contribute_state()` on its sub-partitions
+and assembling their contributions into a nested TOML fragment (see SIM-SYS-059). Loading
+a snapshot shall use the same contract in reverse: the orchestrator decomposes the
+fragment and passes each partition's section to that partition's load implementation; a
+compositor partition decomposes its section further and delegates to its sub-partitions.
+The resulting snapshot fragment shall be a valid composition fragment loadable by the same
+mechanism used for sessions and scenarios (SIM-SYS-023). The snapshot shall include the
+current simulation time, execution state, and the complete internal state of each
+partition for all active vehicles. The snapshot fragment shall be human-readable,
+inspectable, and editable using standard text tools.
 
 **Rationale:** State persistence is a natural extension of the composition fragment
 mechanism rather than a separate system. Initial conditions are already composition
@@ -908,7 +1158,9 @@ contract crate (consistent with SIM-SYS-003) ensures that all partitions seriali
 deserialize state through a uniform interface rather than each inventing its own
 mechanism. The orchestrator coordinates dump and load without needing knowledge of any
 partition's internal state structure — it invokes the contract and composes or
-decomposes the resulting fragment sections.
+decomposes the resulting fragment sections. Recursive delegation through compositors
+ensures that the snapshot captures state at every layer without the orchestrator needing
+to know the internal decomposition of any partition.
 
 **Verification Expectations:**
 - Pass: A state snapshot captured during a Running simulation produces a valid TOML file
@@ -978,7 +1230,7 @@ checkpoints at specific times or conditions without UI interaction.
 
 ---
 
-## 13. Distribution and Packaging
+## 14. Distribution and Packaging
 
 ---
 
@@ -1105,7 +1357,7 @@ invocation.
 
 ---
 
-## 14. Telemetry
+## 15. Telemetry
 
 ---
 
@@ -1153,7 +1405,7 @@ visualization stack ensures that recorded and live views are visually consistent
 
 ---
 
-## 15. Events
+## 16. Events
 
 ---
 
@@ -1350,29 +1602,40 @@ influence execution state.
 ### SIM-SYS-041 — Execution State Transition Requests
 
 **Statement:** Any partition shall be capable of requesting a simulation execution state
-transition by emitting an `ExecutionStateRequest` message on the simulation bus. The
+transition by emitting an `ExecutionStateRequest` message on its layer's bus. The
 `ExecutionStateRequest` type shall be defined in `sim-core` and shall carry the requested
-transition and the identity of the requesting partition. The orchestrator (`sim-app`)
-shall be the sole authority for evaluating and applying state transitions according to
-the state machine defined in SIM-SYS-040. Requests that represent invalid transitions
-shall be logged with the requesting partition's identity and ignored. Valid transitions
-shall take effect within one physics tick of receipt.
+transition and the identity of the requesting partition. At layer 0, the orchestrator
+(`sim-app`) receives requests directly on the layer 0 bus and is the sole authority for
+evaluating and applying state transitions according to the state machine defined in
+SIM-SYS-040. At deeper layers, requests emitted on an inner bus are received by the
+compositor at that layer, which relays them to the outer bus according to its relay
+authority (see SIM-SYS-057). The request propagates through the compositor relay chain
+until it reaches the layer 0 orchestrator for arbitration. Requests that represent
+invalid transitions shall be logged with the requesting partition's identity and ignored.
+Valid transitions shall take effect within one physics tick of receipt at the
+orchestrator.
 
 **Rationale:** The fractal partition pattern (SIM-SYS-004) implies that partitions at
 any layer may generate events that affect execution state. Multiple sources may
 legitimately need to change execution state: the UI for interactive control, a plant
 model detecting a safety limit exceedance, a GN&C event handler reaching a scripted
-pause point, or a condition-triggered event firing a stop. Routing all requests through
-a single arbitration point (the orchestrator) prevents race conditions, ensures
-transition validity, and provides a single audit point for execution state changes.
+pause point, or a condition-triggered event firing a stop. Because buses are
+layer-scoped (SIM-SYS-055), requests from inner layers reach the orchestrator through
+compositor relay rather than direct emission on a global bus. Each compositor in the
+relay chain may add context or transform the request (SIM-SYS-057), ensuring that the
+outer layer sees only what the compositor's contract promises. The orchestrator remains
+the single arbitration point for execution state changes.
 
 **Verification Expectations:**
-- Pass: A physics partition emitting `ExecutionStateRequest::Stop` during a Running
-  simulation causes the orchestrator to transition to the Stopped state within one
-  physics tick.
-- Pass: A GN&C partition emitting `ExecutionStateRequest::Pause` during a Running
-  simulation causes the orchestrator to transition to the Paused state within one
-  physics tick.
+- Pass: A layer 0 physics partition emitting `ExecutionStateRequest::Stop` during a
+  Running simulation causes the orchestrator to transition to the Stopped state within
+  one physics tick.
+- Pass: A layer 0 GN&C partition emitting `ExecutionStateRequest::Pause` during a
+  Running simulation causes the orchestrator to transition to the Paused state within
+  one physics tick.
+- Pass: A layer 1 sub-partition emitting `ExecutionStateRequest::Stop` on the layer 1
+  bus causes the compositor to relay the request to the layer 0 bus, where the
+  orchestrator arbitrates and transitions to the Stopped state.
 - Pass: An `ExecutionStateRequest::Resume` emitted while the simulation is in the
   Running state is logged as an invalid transition and ignored; the simulation continues
   running without interruption.
@@ -1380,6 +1643,8 @@ transition validity, and provides a single audit point for execution state chang
   requested it.
 - Fail: A partition directly mutates the execution state resource without emitting an
   `ExecutionStateRequest` on the bus.
+- Fail: A sub-partition at layer 1 or deeper emits an `ExecutionStateRequest` directly
+  on the layer 0 bus, bypassing its compositor's relay authority.
 - Fail: Two partitions emitting conflicting requests in the same tick causes undefined
   behavior (see SIM-SYS-043 for conflict resolution).
 
@@ -1389,9 +1654,12 @@ transition validity, and provides a single audit point for execution state chang
 
 **Statement:** The event system shall support `"sim_pause"`, `"sim_stop"`, and
 `"sim_resume"` as built-in action identifiers available at both layer 0 (system level)
-and layer 1 (partition level). When an event with one of these action identifiers fires, the event
-dispatcher shall emit the corresponding `ExecutionStateRequest` on the simulation bus.
-These actions shall be usable with both time-triggered and condition-triggered events.
+and layer 1 (partition level). When an event with one of these action identifiers fires,
+the event dispatcher shall emit the corresponding `ExecutionStateRequest` on the bus at
+the layer where the event is defined. At layer 0, this reaches the orchestrator directly.
+At layer 1 or deeper, the request follows the compositor relay chain (SIM-SYS-057,
+SIM-SYS-041) to reach the orchestrator for arbitration. These actions shall be usable
+with both time-triggered and condition-triggered events.
 
 **Rationale:** Execution state changes are among the most common event-driven actions in
 mission simulation. Encoding a GN&C pause point, a plant safety stop, or a scenario
@@ -1399,7 +1667,9 @@ phase transition as event actions keeps the logic declarative and configurable i
 scenario TOML, avoiding hard-coded procedural checks in partition source code. Connecting
 the event system to the execution state request mechanism (SIM-SYS-041) ensures all
 event-driven state changes flow through the same arbitration path as UI-initiated
-changes.
+changes. Because buses are layer-scoped (SIM-SYS-055), event-driven requests at inner
+layers reach the orchestrator through the same compositor relay path as all other
+inter-layer requests.
 
 **Verification Expectations:**
 - Pass: A scenario TOML entry `[[gnc.events]]` with `trigger = { time = 30.0 }` and
@@ -1452,7 +1722,7 @@ requests.
 
 ---
 
-## 16. Verification and Traceability
+## 17. Verification and Traceability
 
 ---
 
@@ -1809,7 +2079,7 @@ migrate on their own schedule while maintaining test coverage throughout the tra
 
 ---
 
-## 17. Requirements Traceability Matrix
+## 18. Requirements Traceability Matrix
 
 | ID          | Title                              | Allocated To              |
 |-------------|------------------------------------|---------------------------|
@@ -1867,3 +2137,9 @@ migrate on their own schedule while maintaining test coverage throughout the tra
 | SIM-SYS-052 | Compositor Tests Assert Compositional Properties | TF-SRS-001 through 006 |
 | SIM-SYS-053 | System Test Reference Generation    | TF-SRS-006              |
 | SIM-SYS-054 | Contract Versioning Scopes Reference Data Propagation | TF-SRS-001 through 006 |
+| SIM-SYS-055 | Layer-scoped Bus                   | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-056 | Compositor Runtime Role             | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-057 | Compositor Relay Authority          | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-058 | Compositor Fault Handling           | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-059 | Recursive State Contribution        | TF-SRS-006                |
+| SIM-SYS-060 | Global Signals                      | TF-SRS-005, TF-SRS-006    |

@@ -1,5 +1,11 @@
 # Inter-partition Communication
 
+This document covers **horizontal** communication between peer partitions at the same
+layer. For **vertical** communication between compositors and their child partitions
+across layers, see [Inter-layer Communication](inter-layer-communication.md). For an
+overview of how horizontal and vertical communication relate, see
+[Communication in the Fractal Partition Pattern](communication-in-the-fractal-partition-pattern.md).
+
 ## What problem does it solve?
 
 A partitioned simulation has a coordination problem. Physics produces vehicle state.

@@ -158,6 +158,12 @@ Each compositor in the chain independently decides whether to relay. There is no
 automatic forwarding — the compositor has full authority over what crosses its layer
 boundary.
 
+Because each compositor processes its inner bus during its own `step()` and relays on
+the next outer-bus read cycle, a request emitted at layer N may take up to N physics
+ticks to reach the orchestrator. This latency is acceptable for normal execution state
+transitions. Safety-critical signals that cannot tolerate relay latency use the direct
+signal mechanism, which bypasses the relay chain entirely.
+
 ### Compositor relay authority
 
 The compositor is not a transparent pipe. When it receives a request on its inner bus,
@@ -200,16 +206,16 @@ The cost is that every compositor must handle relay decisions. In practice, most
 compositors relay `ExecutionStateRequest` transparently and suppress everything else —
 a small amount of boilerplate for a strong encapsulation guarantee.
 
-## Global signals
+## Direct signals
 
 While the default path for inter-layer requests is the compositor relay
 chain, certain safety-critical signals must reach the orchestrator without risk of being
 suppressed or delayed by intermediate compositors. The contract crate at the outermost
-layer may declare **global signal types** that bypass the relay chain entirely.
+layer may declare **direct signal types** that bypass the relay chain entirely.
 
-### When global signals are warranted
+### When direct signals are warranted
 
-Global signals exist for a narrow set of scenarios where compositor authority is a
+Direct signals exist for a narrow set of scenarios where compositor authority is a
 liability rather than an asset:
 
 - **Emergency stop.** A hardware fault or safety limit exceedance that must halt the
@@ -220,17 +226,18 @@ liability rather than an asset:
 These are signals where the cost of a compositor suppressing them (even accidentally)
 exceeds the cost of breaking layer encapsulation.
 
-### How global signals work
+### How direct signals work
 
-Global signal types are declared in the outermost contract crate (`sim-core` at
-layer 0). Any partition at any layer depth can emit a global signal. The signal bypasses
-all intermediate bus instances and reaches the orchestrator directly.
+Direct signal types are declared in a contract crate. Any partition within that contract
+crate's hierarchy can emit a declared direct signal. The signal bypasses all intermediate
+bus instances within the hierarchy and reaches the declaring crate's orchestrator
+directly.
 
 ```
-Layer 2 sub-partition emits GlobalSignal::EmergencyStop
+Layer 2 sub-partition emits DirectSignal::EmergencyStop
   → bypasses layer 2 bus
   → bypasses layer 1 bus
-  → reaches orchestrator directly
+  → reaches universe's orchestrator directly
   → orchestrator applies emergency response
 ```
 
@@ -238,24 +245,50 @@ The mechanism for bypass is implementation-specific — it might be a separate c
 shared atomic, or a direct callback registered during initialization. The key property
 is that no compositor in the chain can intercept or suppress it.
 
-### Constraints on global signals
+### Direct signals are hierarchy-scoped
 
-Global signals are not a general-purpose communication mechanism. They are constrained
+Direct signals are scoped to the contract crate that declares them — they are not truly
+system-global when the system is embedded. When universe is a partition in an outer
+application:
+
+```
+Outer app (layer 0):
+  outer-core (outer contract crate)
+  outer orchestrator ↔ universe (partition) ↔ other partitions
+
+Universe (layer 1 from outer app's perspective):
+  sim-core (universe's contract crate)
+  universe orchestrator ↔ physics ↔ gnc ↔ viz ↔ ui
+```
+
+A `DirectSignal::EmergencyStop` declared in `sim-core` and emitted by a physics
+sub-partition reaches universe's orchestrator — not the outer app's orchestrator. The
+signal does not cross universe's boundary. The outer app learns of the event only
+through universe's contract interface on the outer bus (e.g., a status change or request
+that universe emits as a result of handling the emergency internally).
+
+This scoping preserves encapsulation. The outer app treats universe as an opaque
+partition. It does not know about `sim-core`'s direct signal types, just as it does not
+know about universe's internal partitions. If the outer app needs its own direct signals,
+it declares them in `outer-core`, independent of universe's internal signals.
+
+### Constraints on direct signals
+
+Direct signals are not a general-purpose communication mechanism. They are constrained
 by design:
 
-- **Declared in the outermost contract crate only.** A layer 1 contract module cannot
-  declare its own global signals — only the system-level contract crate can. This
-  prevents proliferation.
-- **Small, stable vocabulary.** The set of global signal types should be minimal and
-  change infrequently. If a signal can be handled through the normal relay chain, it
-  should be.
-- **No data flow.** Global signals carry minimal payload — a signal type, a reason
+- **Small, stable vocabulary.** The set of direct signal types at any layer should be
+  minimal and change infrequently. If a signal can be handled through the normal relay
+  chain, it should be.
+- **No data flow.** Direct signals carry minimal payload — a signal type, a reason
   string, and a source identifier. They are notifications, not data channels.
-- **Audit trail.** Every global signal emission is logged with the emitting partition's
+- **Audit trail.** Every direct signal emission is logged with the emitting partition's
   identity and layer depth, providing visibility into when the escape hatch is used.
+- **Hierarchy-scoped.** Direct signals do not propagate beyond the declaring contract
+  crate's boundary. Each embedding context defines its own safety mechanisms.
 
-The existence of global signals does not weaken the relay chain — it complements it.
-Normal inter-layer communication goes through compositor relay with full authority. Global
+The existence of direct signals does not weaken the relay chain — it complements it.
+Normal inter-layer communication goes through compositor relay with full authority. Direct
 signals exist for the rare case where that authority must be overridden for safety.
 
 ## Recursive state contributions
@@ -414,7 +447,7 @@ receives one fragment per partition, structured however the partition chooses. A
 partition's internal state structure is not exposed through flat keys visible to the
 entire system.
 
-### Why global signals exist despite compositor authority
+### Why direct signals exist despite compositor authority
 
 The compositor relay chain is the right default — it preserves encapsulation and gives
 each layer control over what crosses its boundary. But for safety-critical signals, the
@@ -422,7 +455,9 @@ cost of a missed or delayed relay exceeds the cost of breaking encapsulation. A 
 fault that a compositor inadvertently suppresses could allow a simulation to continue in
 an unsafe state.
 
-Global signals are the escape hatch: declared sparingly in the outermost contract crate,
-carrying minimal payload, and logged for audit. They complement the relay chain rather
-than replacing it — normal communication uses relay, safety-critical communication uses
-global signals.
+Direct signals are the escape hatch: declared sparingly in a contract crate, scoped to
+that crate's hierarchy, carrying minimal payload, and logged for audit. They complement
+the relay chain rather than replacing it — normal communication uses relay,
+safety-critical communication uses direct signals. When the system is embedded as a
+partition, its direct signals remain internal — the embedding system defines its own
+safety mechanisms independently.

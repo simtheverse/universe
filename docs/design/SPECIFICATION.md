@@ -98,6 +98,7 @@ operational mission data are outside the scope of this specification.
 | IC                | Initial Conditions                                                         |
 | INCOSE            | International Council on Systems Engineering                               |
 | ISA               | International Standard Atmosphere                                          |
+| Event action      | An action identifier specified in an event's TOML definition. All event actions are declared in contract crates and scoped to the declaring crate's hierarchy. Actions defined in `sim-core` (e.g., `"sim_stop"`, `"sim_pause"`, `"sim_resume"`) are available at every layer because all partitions depend on `sim-core`. Actions defined in a partition's contract crate (e.g., `"stage_separate"`, `"inject_sensor_fault"`) are available to events within that partition's hierarchy. The event mechanism is uniform; the action vocabulary is contract-crate-scoped. See SIM-SYS-061 |
 | Fractal partition pattern | The architectural principle that the system is decomposed into layers and partitions, where each partition at every layer applies the same contract/implementation/compositor structure and the same event, configuration, and communication primitives as the system level. Named for the self-similarity of structure at every scale. See SIM-SYS-004 |
 | Layer             | A level in the system's hierarchical decomposition. Layer 0 is the system level; layer 1 is the partition level. The fractal partition pattern applies at every layer: each uses the same structural primitives (contracts, events, composition) as the layer above it |
 | Layer and partition uniformity principle | The defining property of the fractal partition pattern: structural primitives (contracts, events, configuration, composition, specification, and documentation structure) are identical in kind across all layers and partitions. A construct available at layer 0 is available in the same form at layer 1 and beyond |
@@ -107,7 +108,7 @@ operational mission data are outside the scope of this specification.
 | Scenario          | A layer 1 composition fragment describing mission-level configuration: vehicle definitions, physics sub-model selections, environment models, events, and initial conditions. A session composes one or more scenarios |
 | Session           | The layer 0 composition fragment describing a simulation run: transport mode, timing parameters, active partitions, and which scenarios to compose. A session is the top-level entry point for the compositor |
 | State snapshot    | A composition fragment produced by capturing the complete simulation state at a point in time. A state snapshot is not a distinct system primitive — it is a composition fragment whose fields happen to have been machine-generated rather than hand-authored. Snapshots are loadable, inheritable, and overridable using the same mechanisms as any other composition fragment (see SIM-SYS-044) |
-| Global signal     | A safety-critical signal type declared in the outermost contract crate (`sim-core`) that bypasses the compositor relay chain and reaches the orchestrator directly, regardless of the emitting partition's layer depth. Reserved for scenarios where compositor suppression would be unsafe (e.g., emergency stop, hardware fault). See SIM-SYS-060 |
+| Direct signal     | A safety-critical signal type declared in a contract crate that bypasses the compositor relay chain within that contract crate's hierarchy and reaches the declaring crate's orchestrator directly. Scoped to the declaring crate's jurisdiction — does not propagate beyond the boundary when the system is embedded as a partition in an outer system. Reserved for scenarios where compositor suppression would be unsafe (e.g., emergency stop, hardware fault). See SIM-SYS-060 |
 | Layer-scoped bus  | A bus instance owned by the compositor at a given layer, connecting that layer's partitions. Each compositor owns a separate bus instance; sub-partitions publish only to their layer's bus, not to buses at other layers. Inter-layer communication occurs through compositor relay. See SIM-SYS-055 |
 | Relay authority   | The compositor's right to decide whether a message received on its inner bus is forwarded to the outer bus. The compositor may relay as-is, transform, suppress, or aggregate messages before re-emitting them. See SIM-SYS-057 |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
@@ -358,7 +359,7 @@ bus for its sub-partitions; the pattern continues at deeper layers. Bus instance
 different layers are independent: they may use different transport modes, and a
 sub-partition at layer N publishes only to the layer N bus, never to a bus at any other
 layer. Inter-layer communication between buses occurs exclusively through compositor
-relay (SIM-SYS-057) or global signals (SIM-SYS-060).
+relay (SIM-SYS-057) or direct signals (SIM-SYS-060).
 
 **Rationale:** Layer-scoped buses preserve the encapsulation guarantee of the fractal
 partition pattern (SIM-SYS-004). The outer layer sees its partitions as opaque units —
@@ -539,42 +540,62 @@ the same composition semantics as all other configuration.
 
 ---
 
-### SIM-SYS-060 — Global Signals
+### SIM-SYS-060 — Direct Signals
 
-**Statement:** The outermost contract crate (`sim-core`) may declare a set of **global
-signal types** — safety-critical signals that bypass the compositor relay chain and reach
-the orchestrator directly, regardless of the emitting partition's layer depth. Any
-partition at any layer depth may emit a declared global signal. Global signals shall
-carry minimal payload: a signal type identifier, a reason string, and the identity of
-the emitting partition. Every global signal emission shall be logged with the emitting
-partition's identity and layer depth. The set of global signal types shall be small,
-stable, declared only in `sim-core`, and reserved for scenarios where compositor relay
-suppression would be unsafe (e.g., emergency stop, hardware fault).
+**Statement:** A contract crate at any layer may declare a set of **direct signal
+types** — safety-critical signals that bypass the compositor relay chain within that
+contract crate's jurisdiction and reach the orchestrator that owns that contract crate
+directly, regardless of the emitting partition's depth within the hierarchy. Direct
+signals are scoped to the contract crate that declares them: signals declared in
+`sim-core` reach universe's orchestrator; they do not propagate beyond universe's
+boundary when universe is embedded as a partition in an outer system. An outer system
+that embeds universe may declare its own direct signals in its own contract crate,
+independent of universe's internal signals. Any partition within the declaring contract
+crate's hierarchy may emit a declared direct signal. Direct signals shall carry minimal
+payload: a signal type identifier, a reason string, and the identity of the emitting
+partition. Every direct signal emission shall be logged with the emitting partition's
+identity and layer depth. The set of direct signal types at any layer shall be small,
+stable, and reserved for scenarios where compositor relay suppression would be unsafe
+(e.g., emergency stop, hardware fault).
 
 **Rationale:** The compositor relay chain (SIM-SYS-057) is the correct default for
 inter-layer communication — it preserves encapsulation and gives each compositor control
 over what crosses its boundary. However, for safety-critical signals, the cost of a
 compositor inadvertently suppressing or delaying a relay exceeds the cost of bypassing
-encapsulation. A hardware fault or emergency condition detected at any layer depth must
-reach the orchestrator without depending on every compositor in the chain making the
-correct relay decision. Global signals are the escape hatch: declared sparingly,
-constrained to minimal payload, and audited. They complement the relay chain rather than
-replacing it — normal inter-layer communication uses compositor relay, safety-critical
-communication uses global signals.
+encapsulation. A hardware fault or emergency condition detected deep in the hierarchy
+must reach the responsible orchestrator without depending on every compositor in the
+chain making the correct relay decision. Direct signals are the escape hatch: declared
+sparingly, constrained to minimal payload, and audited. They complement the relay chain
+rather than replacing it — normal inter-layer communication uses compositor relay,
+safety-critical communication uses direct signals. Scoping direct signals to the
+declaring contract crate's jurisdiction preserves encapsulation at the embedding
+boundary: when universe is a partition in an outer system, its internal direct signals
+are an implementation detail invisible to the outer system. The outer system defines its
+own safety mechanisms in its own contract crate. Universe communicates the outcome of
+internal emergencies through its contract interface on the outer bus, just as any other
+partition would.
 
 **Verification Expectations:**
-- Pass: A sub-partition at layer 2 emitting `GlobalSignal::EmergencyStop` causes the
-  orchestrator to receive the signal without any intermediate compositor relay step.
-- Pass: Global signal types are declared in `sim-core` and only in `sim-core`; no
-  partition or layer 1 contract module declares its own global signal types.
-- Pass: Every global signal emission is logged with the emitting partition's identity
+- Pass: A sub-partition at layer 2 emitting `DirectSignal::EmergencyStop` causes
+  universe's orchestrator to receive the signal without any intermediate compositor
+  relay step.
+- Pass: When universe is embedded as a partition in an outer system, a direct signal
+  declared in `sim-core` reaches universe's orchestrator but does not appear on the
+  outer system's bus. The outer system learns of the event only through universe's
+  contract interface (e.g., a status change or request on the outer bus).
+- Pass: An outer system declares its own direct signal types in its own contract crate,
+  independent of `sim-core`'s direct signal types.
+- Pass: Every direct signal emission is logged with the emitting partition's identity
   and layer depth.
-- Pass: A global signal carries only a type identifier, reason string, and emitter
+- Pass: A direct signal carries only a type identifier, reason string, and emitter
   identity — not arbitrary data payloads.
-- Fail: A compositor at an intermediate layer intercepts or suppresses a global signal.
-- Fail: Global signals are used for non-safety-critical communication that could be
+- Fail: A compositor at an intermediate layer intercepts or suppresses a direct signal
+  within the declaring contract crate's hierarchy.
+- Fail: A direct signal declared in `sim-core` propagates beyond universe's boundary
+  when universe is embedded as a partition in an outer system.
+- Fail: Direct signals are used for non-safety-critical communication that could be
   handled through the normal compositor relay chain.
-- Fail: The set of global signal types is large or changes frequently, indicating misuse
+- Fail: The set of direct signal types is large or changes frequently, indicating misuse
   as a general communication mechanism.
 
 ---
@@ -1412,18 +1433,25 @@ visualization stack ensures that recorded and live views are visually consistent
 ### SIM-SYS-035 — Event System Architecture
 
 **Statement:** The system shall provide a unified event system in which discrete events
-can be defined, armed, triggered, and handled at both layer 0 (system level) and layer 1
-(partition level). Consistent with the fractal partition pattern (SIM-SYS-004), each
-partition (physics, GN&C, visualization, environment) shall define, arm, and handle
-events using the same primitives and interfaces available at the system level.
+can be defined, armed, triggered, and handled at every layer of the fractal partition
+hierarchy. The event mechanism — trigger types, arming lifecycle, TOML schema, and
+evaluation semantics — shall be identical at every layer and in every partition, consistent
+with the fractal partition pattern (SIM-SYS-004). The semantic meaning of events — what
+actions they invoke and what domain concerns they express — shall vary by layer and
+partition. Each layer's contract crate defines the action vocabulary available to events
+scoped at that layer (see SIM-SYS-061).
 
-**Rationale:** Mission timelines, failure injection, scenario scripting, and conditional
-logic all require a mechanism for scheduling and reacting to discrete occurrences during
-a simulation run. The fractal partition pattern requires that the event system be
-uniform across layers: partition-specific events (e.g., a sensor failure in the plant
-model, a mode transition in GN&C, a camera cut in visualization) are expressed and
-managed with the same constructs as system-level events (e.g., simulation start, scenario
-phase transitions), avoiding redundant or incompatible mechanisms across partitions.
+**Rationale:** The fractal partition pattern requires that structural primitives be
+uniform in kind across all layers. The event primitive is no exception: its mechanism
+(trigger + action + parameters, declaratively defined in TOML) is the same everywhere.
+But just as the bus carries different typed messages at different layers, and contracts
+specify different behavioral obligations at different layers, events express different
+domain concerns at different layers. Layer 0 events address infrastructure and execution
+lifecycle (telemetry snapshots, health checks, execution state transitions). Layer 1
+events address mission and domain concerns (scenario phase transitions, failure
+injection, mode changes). Layer 2+ events address subsystem-internal concerns
+(model transitions, convergence thresholds). The event mechanism is the uniform
+primitive; the action vocabulary is the layer-scoped semantic content.
 
 **Verification Expectations:**
 - Pass: A system-level event and a partition-level event defined in the same scenario
@@ -1431,6 +1459,9 @@ phase transitions), avoiding redundant or incompatible mechanisms across partiti
 - Pass: A partition-level event defined within the GN&C partition uses the same event
   definition schema and trigger types as a system-level event defined outside any
   partition scope.
+- Pass: A partition-level event uses a domain-specific action identifier defined in that
+  partition's contract crate, and the action is handled within the partition without
+  requiring system-level awareness of the action type.
 - Fail: A partition implements its own ad-hoc event mechanism that does not conform to
   the system event interface defined in `sim-core`.
 - Fail: Events can only be defined at the system level; partition-scoped events are not
@@ -1613,7 +1644,10 @@ authority (see SIM-SYS-057). The request propagates through the compositor relay
 until it reaches the layer 0 orchestrator for arbitration. Requests that represent
 invalid transitions shall be logged with the requesting partition's identity and ignored.
 Valid transitions shall take effect within one physics tick of receipt at the
-orchestrator.
+orchestrator. Because requests from deeper layers traverse the compositor relay chain,
+a request emitted at layer N may take up to N physics ticks to reach the orchestrator.
+Safety-critical signals that cannot tolerate relay latency shall use the direct signal
+mechanism (SIM-SYS-060) instead.
 
 **Rationale:** The fractal partition pattern (SIM-SYS-004) implies that partitions at
 any layer may generate events that affect execution state. Multiple sources may
@@ -1623,8 +1657,12 @@ pause point, or a condition-triggered event firing a stop. Because buses are
 layer-scoped (SIM-SYS-055), requests from inner layers reach the orchestrator through
 compositor relay rather than direct emission on a global bus. Each compositor in the
 relay chain may add context or transform the request (SIM-SYS-057), ensuring that the
-outer layer sees only what the compositor's contract promises. The orchestrator remains
-the single arbitration point for execution state changes.
+outer layer sees only what the compositor's contract promises. The relay chain introduces
+latency proportional to layer depth — each compositor processes its inner bus during its
+own `step()` and relays on the next outer-bus read cycle. This latency is acceptable for
+normal execution state transitions; safety-critical scenarios that require immediate
+response use direct signals (SIM-SYS-060), which bypass the relay chain entirely. The
+orchestrator remains the single arbitration point for execution state changes.
 
 **Verification Expectations:**
 - Pass: A layer 0 physics partition emitting `ExecutionStateRequest::Stop` during a
@@ -1652,24 +1690,28 @@ the single arbitration point for execution state changes.
 
 ### SIM-SYS-042 — Execution State Change as Event Action
 
-**Statement:** The event system shall support `"sim_pause"`, `"sim_stop"`, and
-`"sim_resume"` as built-in action identifiers available at both layer 0 (system level)
-and layer 1 (partition level). When an event with one of these action identifiers fires,
-the event dispatcher shall emit the corresponding `ExecutionStateRequest` on the bus at
-the layer where the event is defined. At layer 0, this reaches the orchestrator directly.
-At layer 1 or deeper, the request follows the compositor relay chain (SIM-SYS-057,
-SIM-SYS-041) to reach the orchestrator for arbitration. These actions shall be usable
-with both time-triggered and condition-triggered events.
+**Statement:** `sim-core` shall declare `"sim_pause"`, `"sim_stop"`, and `"sim_resume"`
+as event action identifiers in its contract-crate action vocabulary. When an event with
+one of these action identifiers fires, the event dispatcher shall emit the corresponding
+`ExecutionStateRequest` on the bus at the layer where the event is defined. At layer 0,
+this reaches the orchestrator directly. At layer 1 or deeper, the request follows the
+compositor relay chain (SIM-SYS-057, SIM-SYS-041) to reach the orchestrator for
+arbitration. These actions shall be usable with both time-triggered and condition-
+triggered events.
 
-**Rationale:** Execution state changes are among the most common event-driven actions in
-mission simulation. Encoding a GN&C pause point, a plant safety stop, or a scenario
-phase transition as event actions keeps the logic declarative and configurable in the
-scenario TOML, avoiding hard-coded procedural checks in partition source code. Connecting
-the event system to the execution state request mechanism (SIM-SYS-041) ensures all
-event-driven state changes flow through the same arbitration path as UI-initiated
-changes. Because buses are layer-scoped (SIM-SYS-055), event-driven requests at inner
-layers reach the orchestrator through the same compositor relay path as all other
-inter-layer requests.
+**Rationale:** Execution state transitions are event actions declared in `sim-core`
+using the same contract-crate action vocabulary mechanism as any other event action
+(SIM-SYS-061). Because every partition in the system depends on `sim-core`, these
+actions are available at every layer — the contract-crate dependency graph makes them
+visible everywhere. Their handlers emit typed bus messages (`ExecutionStateRequest`)
+that enter the arbitration pipeline. Encoding a GN&C pause point, a plant
+safety stop, or a scenario phase transition as event actions keeps the logic declarative
+and configurable in the scenario TOML, avoiding hard-coded procedural checks in partition
+source code. Connecting the event system to the execution state request mechanism
+(SIM-SYS-041) ensures all event-driven state changes flow through the same arbitration
+path as UI-initiated changes. Because buses are layer-scoped (SIM-SYS-055), event-driven
+requests at inner layers reach the orchestrator through the same compositor relay path as
+all other inter-layer requests.
 
 **Verification Expectations:**
 - Pass: A scenario TOML entry `[[gnc.events]]` with `trigger = { time = 30.0 }` and
@@ -1719,6 +1761,78 @@ requests.
   depending on transport mode or thread scheduling.
 - Fail: A lower-priority request silently overrides a higher-priority request without
   logging.
+
+---
+
+### SIM-SYS-061 — Contract-crate-scoped Event Action Vocabulary
+
+**Statement:** All event action identifiers shall be declared in contract crates. The
+set of action identifiers available to events at a given scope is the union of actions
+declared in the contract crates that the partition at that scope transitively depends on.
+Each contract crate declares its action vocabulary as part of its contract interface,
+alongside trait definitions and typed message declarations. The event TOML schema —
+trigger, action identifier, and parameters — shall be identical regardless of which
+contract crate declares the action. Action identifiers shall be validated at
+configuration load time: an action identifier used in an event entry must be declared in
+a contract crate visible at that event's scope, or the configuration shall be rejected.
+
+There is one mechanism for declaring event actions, one mechanism for dispatching them,
+and one TOML schema for defining them. What varies across layers is the action
+vocabulary — which actions are available — determined by the contract-crate dependency
+graph.
+
+**Rationale:** The fractal partition pattern produces a system where events at different
+layers express fundamentally different domain concerns. Layer 0 events address
+infrastructure: execution lifecycle, telemetry checkpoints, periodic health checks.
+Layer 1 events address mission and domain concerns: scenario phase transitions
+(`"stage_separate"`, `"deploy_landing_gear"`), failure injection
+(`"inject_sensor_fault"`), mode changes (`"switch_aero_model"`). Layer 2+ events address
+subsystem-internal concerns: model transitions, convergence thresholds, internal mode
+switches.
+
+Actions declared in `sim-core` — such as `"sim_stop"`, `"sim_pause"`, `"sim_resume"`
+(SIM-SYS-042) — are available at every layer because every partition transitively
+depends on `sim-core`. Actions declared in a physics contract crate are available to
+events within the physics partition because the physics implementation depends on its
+contract crate. `sim-core`'s actions are available everywhere for the same reason
+`sim-core`'s typed messages are available everywhere — the dependency graph makes them
+visible.
+
+This mirrors how all other contract-crate-scoped primitives work. Typed messages are
+declared in contract crates and available wherever the dependency graph reaches. Traits
+are declared in contract crates and implemented by partitions that depend on those
+crates. Event actions follow the same pattern: declared in contract crates, available
+wherever the dependency graph reaches, handled by the partition whose dispatcher owns
+that scope.
+
+Without contract-crate scoping, the event system must either restrict actions to a
+hardcoded execution-state set — forcing partitions to encode domain logic procedurally
+rather than declaratively — or maintain a single global action registry that couples all
+partitions to each other's domain vocabulary. Contract-crate scoping avoids both: each
+contract crate owns its action namespace, the dependency graph determines visibility,
+and no global coordination is needed.
+
+**Verification Expectations:**
+- Pass: An action (`"sim_stop"`) declared in `sim-core` is usable in a layer 1 partition
+  event because the partition transitively depends on `sim-core`.
+- Pass: An action (`"inject_sensor_fault"`) declared in the physics contract crate is
+  used in a `[[physics.events]]` entry and handled by the physics partition's event
+  dispatcher.
+- Pass: An action declared in the physics contract crate is rejected at configuration
+  load time if used in a `[[gnc.events]]` entry (the GN&C partition does not depend on
+  the physics contract crate).
+- Pass: Event entries using actions from `sim-core` and actions from a partition's
+  contract crate have identical TOML syntax — the same `trigger`, `action`, and
+  `parameters` fields.
+- Pass: An action's effects on the outer layer are visible only through whatever the
+  partition publishes on the outer bus as part of its normal contract obligations — not
+  through a separate event propagation mechanism.
+- Fail: Event actions are defined in a global registry visible to all partitions,
+  creating cross-partition coupling on domain vocabulary.
+- Fail: A partition handles domain-specific event logic procedurally in its `step()`
+  implementation because the event system does not support contract-crate-scoped actions.
+- Fail: Actions declared in `sim-core` use a different declaration mechanism, dispatch
+  path, or TOML schema than actions declared in a partition's contract crate.
 
 ---
 
@@ -2142,4 +2256,5 @@ migrate on their own schedule while maintaining test coverage throughout the tra
 | SIM-SYS-057 | Compositor Relay Authority          | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-058 | Compositor Fault Handling           | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-059 | Recursive State Contribution        | TF-SRS-006                |
-| SIM-SYS-060 | Global Signals                      | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-060 | Direct Signals                      | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-061 | Contract-crate-scoped Event Action Vocabulary | TF-SRS-001 through 006    |

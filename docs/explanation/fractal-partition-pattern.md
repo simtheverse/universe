@@ -95,12 +95,23 @@ T+30s uses the same schema as a GN&C event that fires a mode transition at scena
 T+60s, which uses the same schema as a physics event that stops the simulation when
 structural load exceeds a threshold.
 
-Because events can request execution state transitions (`sim_pause`, `sim_stop`,
-`sim_resume`), any partition at any layer can influence the simulation lifecycle through
-the same mechanism. A plant model detecting a limit exceedance, a GN&C algorithm reaching
-a scripted checkpoint, and an operator clicking a pause button all emit the same
-`ExecutionStateRequest` on the bus. The orchestrator arbitrates — stop beats pause beats
-resume — but the mechanism is uniform.
+The event **mechanism** is uniform. The event **vocabulary** is contract-crate-scoped.
+All event actions are declared in contract crates, and the set of actions available at a
+given scope is determined by the contract-crate dependency graph — the same mechanism
+that determines which typed messages and traits are available. `sim-core` declares
+`sim_pause`, `sim_stop`, and `sim_resume`; these are available everywhere because every
+partition depends on `sim-core`. Each partition's contract crate declares actions for its
+own domain: a physics contract crate defines `"inject_sensor_fault"` and
+`"switch_aero_model"`, a GN&C contract crate defines `"engage_terminal_guidance"`, a
+visualization contract crate defines `"transition_camera"`. All use the same TOML schema,
+the same trigger types, and the same arming lifecycle. What varies is the vocabulary, not
+the mechanism.
+
+This parallels how every other fractal primitive works. The bus is uniform in mechanism
+but carries different typed messages at each layer. Contracts are uniform in structure
+but specify different obligations per partition. Events are uniform in schema but invoke
+different actions per scope. The mechanism is the fractal primitive; the vocabulary is
+the contract-crate-scoped semantic content.
 
 ### Documentation and specifications propagate
 
@@ -173,7 +184,20 @@ communication, and points to the two detailed companion documents:
 - [Inter-layer Communication](inter-layer-communication.md) — the vertical model:
   layer-scoped buses, compositor runtime role, downward bus broadcast, upward request
   relay, compositor relay authority, recursive state contributions, fault handling, and
-  global signals.
+  direct signals.
+
+### Events
+
+The event summary above describes a system where the mechanism is uniform but the
+vocabulary is contract-crate-scoped. This raises questions about how actions are
+declared, how the dependency graph determines action visibility, how the compositor
+boundary affects event handling, and what happens when event-driven behavior at one
+layer needs to influence another.
+
+[Events as a Fractal Primitive](events-as-a-fractal-primitive.md) develops the full
+event model: how actions are declared in contract crates, how the dependency graph
+determines availability, how event handling respects the compositor boundary, and the
+design rationale for scoping vocabulary rather than mechanism.
 
 ### Testing
 

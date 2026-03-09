@@ -81,7 +81,7 @@ direction of communication determines the mechanism:
   through the relay chain until they reach the orchestrator.
 
 The inter-layer communication model — including downward and upward communication,
-relay chains, recursive state contributions, fault handling, and global signals — is
+relay chains, recursive state contributions, fault handling, and direct signals — is
 detailed in [Inter-layer Communication](inter-layer-communication.md).
 
 ## How the two relate
@@ -196,4 +196,4 @@ boundary.
 - [Inter-layer Communication](inter-layer-communication.md) — the vertical model:
   layer-scoped buses, compositor runtime role, downward data broadcast, upward request
   relay, compositor relay authority, recursive state contributions, fault handling, and
-  global signals.
+  direct signals.

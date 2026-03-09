@@ -97,17 +97,27 @@ tick N outputs.
 
 ### Phase 2: Partition Stepping — Intra-tick Message Isolation
 
-Phase 2 is the core simulation work. The compositor calls `step(dt)` on each partition
-in a deterministic order that is stable across ticks (the mechanism by which the
-compositor determines this order is implementation-defined — e.g., dependency graph,
-declaration order). Because of double-buffering, the simulation result is independent
-of this order; it matters only for direct signal polling latency and audit log
-determinism.
+Phase 2 is the core simulation work. The normative model is sequential: the compositor
+calls `step(dt)` on each partition one at a time, in a deterministic order that is
+stable across ticks. Between each partition's step, the compositor checks for direct
+signals — giving safety-critical signals a worst-case latency of one partition's step
+duration.
 
 If a partition is itself a compositor, its `step()` call executes a complete nested
 three-phase tick lifecycle for its own sub-partitions. The fractal structure means tick
 lifecycles nest recursively — the outer compositor does not resume until the inner
 compositor's entire tick (all three phases) has completed.
+
+**Concurrent stepping** is an allowed optimization. A compositor may step partitions in
+parallel — for example, under network transport where sequential stepping would impose
+a round-trip per partition. This is safe because the double-buffer already isolates
+partitions from each other's current-tick outputs: concurrent writers go to isolated
+write paths, and all readers see the same immutable tick N-1 buffer. The invariants
+that must hold are: write paths don't contend, bus requests are collected thread-safely,
+all steps complete before Phase 3 (the tick barrier), and direct signals are checked at
+least once before Phase 3 (worst-case latency becomes the longest partition's step
+duration rather than one partition's). The simulation result is identical to sequential
+stepping — the double-buffer guarantees this.
 
 The key invariant is **intra-tick message isolation**:
 
@@ -145,10 +155,12 @@ result is identical regardless of step order — which is exactly what makes the
 independence guarantee enforceable, because different transport modes may step partitions
 in different orders or concurrently.
 
-**Direct signal polling** occurs between each pair of partition steps. This gives
-safety-critical signals a worst-case latency of one partition's `step()` duration rather
-than one full tick. The compositor checks signals while it has exclusive control — not
-while holding mutable references into partition state — avoiding reentrancy hazards.
+**Direct signal polling** under sequential stepping occurs between each pair of partition
+steps, giving safety-critical signals a worst-case latency of one partition's `step()`
+duration. Under concurrent stepping, the compositor checks signals at least once after
+all steps complete, giving a worst-case latency of the longest partition's step duration.
+In both cases the compositor checks signals while it has exclusive control — not while
+partition state is being mutated — avoiding reentrancy hazards.
 
 ### Phase 3: Post-tick Processing
 

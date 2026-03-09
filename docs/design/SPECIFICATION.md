@@ -682,9 +682,9 @@ the fractal structure nests tick lifecycles recursively.
 
 **Phase 2 — Partition stepping:**
 
-For each partition in the compositor's step order (a deterministic ordering defined by
-the compositor and stable across ticks; the mechanism by which the compositor determines
-this order is implementation-defined):
+The normative execution model is sequential: for each partition in the compositor's step
+order (a deterministic ordering defined by the compositor and stable across ticks; the
+mechanism by which the compositor determines this order is implementation-defined):
 
 1. The partition reads inter-partition messages from the read buffer (tick N-1 outputs).
    A message published by partition A during tick N-1 is visible; a message published by
@@ -694,6 +694,27 @@ this order is implementation-defined):
    write buffer (tick N outputs).
 3. After each partition's `step()` returns, the compositor checks for pending direct
    signals and processes them before stepping the next partition.
+
+A compositor may step partitions concurrently as an optimization (e.g., under async or
+network transport where sequential stepping would impose unnecessary serialization
+latency). Concurrent stepping is permitted provided the compositor upholds the following
+invariants:
+
+- **Intra-tick message isolation:** Each partition reads from the read buffer and writes
+  to the write buffer. No partition observes another partition's current-tick output.
+  Write paths shall be isolated — concurrent `step()` calls shall not contend on shared
+  write buffer state.
+- **Direct signals:** The compositor shall check for pending direct signals at least once
+  before Phase 3. Under concurrent stepping the worst-case direct signal latency is the
+  duration of the longest partition's `step()` call, rather than one partition's step
+  duration under sequential stepping.
+- **Request collection:** Bus requests (e.g., `ExecutionStateRequest`) emitted by
+  concurrently stepping partitions shall be collected in a thread-safe manner for
+  arbitration in Phase 3.
+- **Tick barrier:** All partition `step()` calls shall complete before Phase 3 begins.
+- **Determinism:** The simulation result shall be identical to that produced by sequential
+  stepping in any order — the double-buffered approach guarantees this provided the
+  invariants above are upheld.
 
 **Phase 3 — Post-tick processing:**
 
@@ -717,22 +738,34 @@ result is identical regardless of which partition steps first.
 prior to this requirement did not fully define when communication becomes visible
 relative to the step loop. Under in-process synchronous transport, the compositor's
 sequential `step()` calls impose a natural ordering that makes visibility implicit. Under
-async and network transport, partitions may step concurrently or in different orders,
-and messages may arrive at non-deterministic times. Without an explicit tick lifecycle,
-different transport implementations make different choices about message visibility,
-producing different simulation results — violating the transport independence guarantee
-(SIM-SYS-005).
+async and network transport, sequential stepping would impose unnecessary serialization
+latency — particularly over a network, where each sequential `step()` call incurs a
+round-trip. Without an explicit tick lifecycle, different transport implementations make
+different choices about message visibility, producing different simulation results —
+violating the transport independence guarantee (SIM-SYS-005).
 
 The double-buffered approach (partitions read from tick N-1, write to tick N) is the
 simplest model that eliminates ordering sensitivity. No partition sees another's
 current-tick output, so the result is the same whether partitions step sequentially,
 concurrently, or in any order. This makes the transport independence guarantee trivially
-enforceable for intra-tick data flow. The tick barrier (all partitions complete before
-WorldState assembly) ensures temporal consistency for WorldState (SIM-SYS-009) and state
-dumps (SIM-SYS-045). Direct signal polling between partition steps (SIM-SYS-060) gives
-safety-critical signals a worst-case latency of one partition's step duration rather
-than one full tick, while avoiding reentrancy hazards — the compositor checks signals
-while it has exclusive control, not while partition state is being mutated.
+enforceable for intra-tick data flow and also makes concurrent stepping safe as an
+optimization — the double-buffer provides isolation without requiring locks on the read
+path. The tick barrier (all partitions complete before WorldState assembly) ensures
+temporal consistency for WorldState (SIM-SYS-009) and state dumps (SIM-SYS-045).
+
+The sequential model is normative because it is simplest to reason about and implement
+correctly. Concurrent stepping is an allowed optimization because the double-buffered
+design already provides the isolation needed — an implementation that upholds the stated
+invariants produces identical results regardless of whether partitions step sequentially
+or concurrently. This allows compositors to choose the strategy appropriate to their
+transport mode: sequential for in-process transport (simple, no threading overhead),
+concurrent for network transport (avoids serialized round-trips).
+
+Under sequential stepping, direct signal polling between partition steps (SIM-SYS-060)
+gives safety-critical signals a worst-case latency of one partition's step duration.
+Under concurrent stepping, the worst case is the longest partition's step duration.
+Both are bounded and both avoid reentrancy hazards — the compositor checks signals while
+no partition state is being mutated.
 
 Snapshot evaluation of event conditions (Phase 3, step 1) eliminates event ordering
 sensitivity: reordering event entries in TOML does not change which events fire, only
@@ -747,8 +780,10 @@ snapshot of partition state.
   during tick N; partition B reads A's tick N output during tick N+1.
 - Pass: Under async transport, the compositor waits for all partition `step()` calls to
   complete before assembling WorldState.
-- Pass: Direct signals are checked at least once between each pair of partition
-  `step()` calls; the worst-case signal latency is one partition's step duration.
+- Pass: Under sequential stepping, direct signals are checked at least once between
+  each pair of partition `step()` calls; the worst-case signal latency is one partition's
+  step duration. Under concurrent stepping, direct signals are checked at least once
+  before Phase 3; the worst-case latency is the longest partition's step duration.
 - Pass: Event conditions are evaluated against pre-step state; an event action that
   modifies a signal does not cause a second event conditioned on that signal to fire in
   the same tick.

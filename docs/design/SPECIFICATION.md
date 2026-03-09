@@ -353,12 +353,20 @@ the same pattern.
 ### SIM-SYS-063 — Bus Delivery Semantics
 
 **Statement:** Each message type declared in a contract crate shall specify its
-delivery semantic as part of the type's interface contract. The delivery semantic
-determines whether a consumer receives every published instance of that message type
-or only the most recent value. The specified semantic shall be enforced identically
-across all transport modes. Request messages where every instance must be processed
-(e.g., `ExecutionStateRequest`, direct signals) shall not be silently dropped under
-any transport mode.
+delivery semantic as part of the type's interface contract. Two delivery semantics
+are defined:
+
+- **Latest-value:** The bus retains only the most recent published value for the
+  message type. A consumer that reads slower than the producer publishes will see
+  only the most recent value, not intermediate values. Suitable for continuous state
+  (e.g., `PlantState`, `WorldState`).
+- **Queued:** The bus retains all published instances in order. A consumer receives
+  every instance regardless of rate mismatch. Suitable for requests and commands
+  where dropping an instance is a correctness failure (e.g., `ExecutionStateRequest`,
+  direct signals).
+
+The specified semantic shall be enforced identically across all transport modes.
+Queued messages shall not be silently dropped under any transport mode.
 
 **Rationale:** Under async transport with partitions at different update rates
 (SIM-SYS-013), a producer may publish faster than a consumer reads. Without a
@@ -371,10 +379,12 @@ independence guarantee (SIM-SYS-005).
 **Verification Expectations:**
 - Pass: The delivery semantic for each message type is declared in the contract crate
   and behaves identically under all three transport modes.
-- Pass: Request messages designated as must-deliver are received by the consumer under
-  all transport modes, regardless of producer-consumer rate mismatch.
-- Fail: A transport implementation silently drops request messages to maintain
-  throughput.
+- Pass: A latest-value message type published multiple times within a tick is read by a
+  slower consumer as a single value — the most recent — with no error or data loss
+  concern.
+- Pass: A queued message type published multiple times within a tick is received by the
+  consumer as a complete, ordered sequence with no dropped instances.
+- Fail: A transport implementation silently drops queued messages to maintain throughput.
 - Fail: The delivery behavior for a message type varies across transport modes.
 
 ---

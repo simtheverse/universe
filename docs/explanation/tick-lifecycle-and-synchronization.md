@@ -1,8 +1,8 @@
 # The Tick Lifecycle and Synchronization Model
 
-This document explains the compositor tick lifecycle (SIM-SYS-062), bus delivery
-semantics (SIM-SYS-063), and fast-track stop relay (SIM-SYS-064) — the synchronization
-model that ensures transport-independent simulation behavior.
+This document explains the compositor tick lifecycle (SIM-SYS-062) and bus delivery
+semantics (SIM-SYS-063) — the synchronization model that ensures transport-independent
+simulation behavior.
 
 ## The Problem: When Is Communication Visible?
 
@@ -154,59 +154,23 @@ snapshot of inter-partition data.
 **Bus request processing** handles `ExecutionStateRequest` messages and other requests
 emitted during the tick, with conflict resolution per SIM-SYS-043.
 
-**Relay** forwards qualified requests to the outer bus per SIM-SYS-057. Stop requests
-are fast-tracked per SIM-SYS-064.
+**Relay** forwards qualified requests to the outer bus per SIM-SYS-057.
 
 ## Bus Delivery Semantics
 
 *Specified in SIM-SYS-063.*
 
-The tick lifecycle defines when messages are visible. Delivery semantics define *how many*
-messages a consumer sees, addressing what happens when a producer publishes faster than
-a consumer reads.
+The tick lifecycle defines when messages are visible. Delivery semantics define *how
+many* messages a consumer sees, addressing what happens when a producer publishes faster
+than a consumer reads.
 
-Two semantics are available, declared per message type in the contract crate:
-
-**Latest-value:** The bus retains only the most recently published value per (message
-type, VehicleId) pair. Consumers always read the current value; no backlog accumulates.
-This is appropriate for continuous state messages like `PlantState`, `WorldState`,
-`EnvState`, and `GNCCommand`, where the consumer needs the current value and historical
-values are irrelevant.
-
-**Queued:** The bus retains all published messages in order. Consumers receive every
-message. The queue is bounded; if full, the producer blocks and a warning is logged.
-This is appropriate for request messages like `ExecutionStateRequest` and direct signals,
-where every instance must be processed and dropping one is a correctness failure.
-
-Under async transport with physics at 1 kHz and visualization at 60 Hz, physics produces
-approximately 16 `VehiclePlantVizState` messages per visualization read. With
-latest-value delivery, the visualization always receives the most recent frame — no
-backlog accumulates. With queued delivery for the same type, 16 messages would queue per
-read cycle, causing unbounded memory growth over a long simulation.
-
-Declaring the delivery semantic in the contract crate alongside the type declaration
-makes bus behavior part of the interface contract. All transport implementations enforce
-the same semantic, ensuring transport independence.
-
-## Fast-Track Stop Relay
-
-*Specified in SIM-SYS-064.*
-
-The compositor relay chain (SIM-SYS-057) introduces latency proportional to layer depth:
-a request emitted at layer N takes up to N ticks to reach the orchestrator. For normal
-execution state transitions, this latency is acceptable. For stop requests triggered by
-safety limit exceedances, it is not — N ticks of continued physics integration in an
-invalid state can produce meaningless or dangerous outputs.
-
-Fast-track relay addresses this by requiring compositors to relay stop requests
-immediately during the current tick's Phase 3 processing, not deferred to the next tick.
-The compositor may also skip stepping the requesting partition on subsequent ticks,
-preventing it from producing outputs from an invalid state while the stop propagates.
-
-This reduces the worst-case stop latency from N ticks to 1 tick regardless of layer
-depth, without changing the relay architecture or bypassing compositor authority. The
-compositor still sees the request and decides to relay it — fast-track is an urgency
-policy, not a bypass.
+Each message type declares its delivery semantic in the contract crate as part of its
+interface contract. The key distinction is between continuous state messages (where the
+consumer only needs the current value) and request messages (where every instance must
+be processed and dropping one is a correctness failure). Under async transport with
+partitions at different rates (SIM-SYS-013), this distinction determines whether a
+backlog accumulates. The declared semantic must behave identically across all transport
+modes, supporting the transport independence guarantee.
 
 ## Relationship to Other Architecture Elements
 
@@ -216,7 +180,7 @@ runtime role (SIM-SYS-056) with precise timing semantics. It integrates with:
 - **Layer-scoped buses** (SIM-SYS-055): The double-buffer operates per bus instance.
   Each compositor at each layer runs its own tick lifecycle on its own bus.
 - **Direct signals** (SIM-SYS-060): Polling between partition steps gives signals
-  sub-tick latency while maintaining Rust memory safety.
+  sub-tick latency while avoiding reentrancy hazards.
 - **Recursive state contribution** (SIM-SYS-059): The tick boundary in Phase 1 ensures
   that `contribute_state()` calls observe consistent, completed state.
 - **Compositor fault handling** (SIM-SYS-058): Faults during any trait call in any
@@ -238,9 +202,8 @@ runtime role (SIM-SYS-056) with precise timing semantics. It integrates with:
 | SIM-SYS-045 | Dump/load processed in Phase 1 at tick boundary |
 | SIM-SYS-055 | Double-buffer operates per layer-scoped bus instance |
 | SIM-SYS-056 | Tick lifecycle extends compositor runtime role |
-| SIM-SYS-057 | Relay occurs in Phase 3; stop relay is fast-tracked (SIM-SYS-064) |
+| SIM-SYS-057 | Relay occurs in Phase 3 |
 | SIM-SYS-058 | Fault handling covers all trait calls in all phases |
 | SIM-SYS-060 | Direct signals polled between partition steps in Phase 2 |
 | SIM-SYS-062 | This explainer |
-| SIM-SYS-063 | Bus delivery semantics (latest-value / queued) |
-| SIM-SYS-064 | Fast-track relay for stop requests |
+| SIM-SYS-063 | Bus delivery semantics declared per message type |

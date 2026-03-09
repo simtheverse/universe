@@ -470,7 +470,6 @@ to other partitions. The compositor tick lifecycle (SIM-SYS-062) fills this gap:
 defines a three-phase execution model with double-buffered message isolation, tick
 barriers for WorldState assembly, and direct signal polling between partition steps.
 Without this lifecycle, different transport modes could make different visibility
-choices, violating transport independence. Fast-track stop relay (SIM-SYS-064) reduces
-worst-case stop latency from N ticks to 1 tick regardless of layer depth. See the
+choices, violating transport independence. See the
 [tick lifecycle and synchronization](tick-lifecycle-and-synchronization.md) explainer
 for full details.

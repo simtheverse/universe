@@ -90,8 +90,8 @@ tick, all partitions read from the previous tick's outputs and write to the curr
 tick's buffer. No partition sees another partition's current-tick output, so the result
 is independent of step order — which is what varies across transport modes. Bus delivery
 semantics (SIM-SYS-063) specify per-message-type behavior (latest-value for continuous
-state, queued for requests), ensuring that all transport implementations handle producer-
-consumer rate mismatches identically. See the
+state, queued for requests), ensuring that all transport implementations handle
+producer–consumer rate mismatches identically. See the
 [tick lifecycle and synchronization](tick-lifecycle-and-synchronization.md) explainer
 for full details.
 

@@ -362,8 +362,7 @@ are defined:
   (e.g., `PlantState`, `WorldState`).
 - **Queued:** The bus retains all published instances in order. A consumer receives
   every instance regardless of rate mismatch. Suitable for requests and commands
-  where dropping an instance is a correctness failure (e.g., `ExecutionStateRequest`,
-  direct signals).
+  where dropping an instance is a correctness failure (e.g., `ExecutionStateRequest`).
 
 The specified semantic shall be enforced identically across all transport modes.
 Queued messages shall not be silently dropped under any transport mode.
@@ -1962,11 +1961,11 @@ all other inter-layer requests.
 within the same physics tick that request conflicting transitions, it shall apply the
 following deterministic priority order: (1) Stop takes priority over all other requests.
 (2) Pause takes priority over Resume. (3) Among requests of equal priority, the request
-from the partition with the numerically lowest partition identifier shall be designated
-the primary request for logging purposes. All valid requests of the same type shall be
-applied (the outcome is the same regardless of which is designated primary). All
-received requests and the resolution outcome shall be logged with the requesting
-partition identities.
+shall be designated the primary request for logging purposes using a deterministic,
+transport-independent rule (the specific tie-breaking mechanism is
+implementation-defined). All valid requests of the same type shall be applied (the
+outcome is the same regardless of which is designated primary). All received requests
+and the resolution outcome shall be logged with the requesting partition identities.
 
 **Rationale:** In a fractally partitioned system, any partition at any layer may
 generate events that request execution state changes. Concurrent events may independently
@@ -1975,10 +1974,9 @@ pause while a physics safety limit simultaneously requests stop. Without a deter
 resolution policy, the resulting execution state would depend on message ordering, which
 varies with transport mode and scheduling. Prioritizing stop over pause reflects the
 principle that safety-critical transitions should not be overridden by less severe
-requests. Tie-breaking by partition identifier rather than arrival order ensures that
-audit logs are deterministic across transport modes — arrival order is
-transport-dependent, but partition identifiers are stable. This supports test
-reproducibility and audit comparability across deployment configurations.
+requests. Tie-breaking by a deterministic, transport-independent rule rather than
+arrival order ensures that audit logs are reproducible across transport modes and
+deployment configurations.
 
 **Verification Expectations:**
 - Pass: When a physics partition emits `ExecutionStateRequest::Stop` and a GN&C
@@ -1988,8 +1986,8 @@ reproducibility and audit comparability across deployment configurations.
   emits `ExecutionStateRequest::Pause` in the same tick, the orchestrator transitions
   to Paused (if currently Paused, the pause wins and the state remains Paused).
 - Pass: When two partitions emit `ExecutionStateRequest::Pause` in the same tick, the
-  partition with the lower identifier is logged as the primary request; the outcome
-  (Paused) is the same regardless of which partition's message arrives first.
+  same partition is deterministically logged as the primary request regardless of
+  transport mode; the outcome (Paused) is the same regardless of which is designated.
 - Pass: The orchestrator log for the tick includes both requests and identifies which
   was applied and which was superseded, with partition identities.
 - Pass: The audit log for a given scenario is identical across synchronous, async, and

@@ -6,7 +6,7 @@
 |---------------|-------------------------------------------------|
 | Document ID   | TF-REV-001                                      |
 | Version       | 0.1.0 (draft)                                   |
-| Status        | Open — pending specification amendments         |
+| Status        | Resolved — all findings addressed by specification amendments |
 | Scope         | System-wide (all layers)                        |
 | References    | TF-SRS-000 (SPECIFICATION.md)                   |
 
@@ -76,18 +76,18 @@ semantics.
 
 | ID | Title | Priority | Spec References | Status |
 |----|-------|----------|-----------------|--------|
-| CR-001 | Intra-tick read/write ordering | Critical | SIM-SYS-005, 006, 056 | Open |
-| CR-002 | WorldState consistency under async | Critical | SIM-SYS-005, 009, 013 | Open |
-| CR-003 | Bus backpressure and overflow | Critical | SIM-SYS-005 | Open |
-| CR-004 | State dump temporal consistency | High | SIM-SYS-044, 045 | Open |
-| CR-005 | Direct signal processing timing | High | SIM-SYS-060 | Open |
-| CR-006 | Event evaluation ordering | High | SIM-SYS-035–039, 061 | Open |
-| CR-007 | Spawn/despawn timing within tick | High | SIM-SYS-010, 009 | Open |
-| CR-008 | Cross-layer conflict resolution ordering | Medium | SIM-SYS-043, 057 | Open |
-| CR-009 | Partition behavior after emitting stop | Medium | SIM-SYS-041, 057, 058 | Open |
-| CR-010 | Fault handling scope for non-step calls | Medium | SIM-SYS-058, 059 | Open |
-| CR-011 | WorldState publish atomicity | Medium | SIM-SYS-009 | Open |
-| CR-012 | Dynamic library unload safety | Low | SIM-SYS-010, 014 | Open |
+| CR-001 | Intra-tick read/write ordering | Critical | SIM-SYS-005, 006, 056, **062** | Resolved |
+| CR-002 | WorldState consistency under async | Critical | SIM-SYS-005, 009, 013, **062** | Resolved |
+| CR-003 | Bus backpressure and overflow | Critical | SIM-SYS-005, **063** | Resolved |
+| CR-004 | State dump temporal consistency | High | SIM-SYS-044, 045, **062** | Resolved |
+| CR-005 | Direct signal processing timing | High | SIM-SYS-060, **062** | Resolved |
+| CR-006 | Event evaluation ordering | High | SIM-SYS-035–039, 061, **062** | Resolved |
+| CR-007 | Spawn/despawn timing within tick | High | SIM-SYS-010, 009, **062** | Resolved |
+| CR-008 | Cross-layer conflict resolution ordering | Medium | SIM-SYS-043, 057 | Resolved |
+| CR-009 | Partition behavior after emitting stop | Medium | SIM-SYS-041, 057, 058, **064** | Resolved |
+| CR-010 | Fault handling scope for non-step calls | Medium | SIM-SYS-058, 059 | Resolved |
+| CR-011 | WorldState publish atomicity | Medium | SIM-SYS-009, **062** | Resolved |
+| CR-012 | Dynamic library unload safety | Low | SIM-SYS-010, 014 | Resolved |
 
 ---
 
@@ -827,15 +827,15 @@ Each finding should be resolved by one of:
 
 | ID | Resolution | Amendment ID | Date | Notes |
 |----|------------|-------------|------|-------|
-| CR-001 | | | | |
-| CR-002 | | | | |
-| CR-003 | | | | |
-| CR-004 | | | | |
-| CR-005 | | | | |
-| CR-006 | | | | |
-| CR-007 | | | | |
-| CR-008 | | | | |
-| CR-009 | | | | |
-| CR-010 | | | | |
-| CR-011 | | | | |
-| CR-012 | | | | |
+| CR-001 | Specification amendment | SIM-SYS-062 | 2026-03-08 | Resolved by tick lifecycle Phase 2 double-buffered message isolation |
+| CR-002 | Specification amendment | SIM-SYS-062 | 2026-03-08 | Resolved by tick lifecycle Phase 1 tick barrier for WorldState assembly |
+| CR-003 | Specification amendment | SIM-SYS-063 | 2026-03-08 | New requirement: per-message-type delivery semantics (latest-value / queued) |
+| CR-004 | Specification amendment | SIM-SYS-045 (amended), SIM-SYS-062 | 2026-03-08 | Tick-boundary dump processing in Phase 1 |
+| CR-005 | Specification amendment | SIM-SYS-062 | 2026-03-08 | Direct signal polling between partition steps in Phase 2, step 3 |
+| CR-006 | Specification amendment | SIM-SYS-062 | 2026-03-08 | Snapshot event evaluation in Phase 3, step 1 |
+| CR-007 | Specification amendment | SIM-SYS-010 (amended), SIM-SYS-062 | 2026-03-08 | Tick-boundary spawn/despawn in Phase 1, step 2 |
+| CR-008 | Specification amendment | SIM-SYS-043 (amended) | 2026-03-08 | Partition-ID tie-break replaces arrival-order tie-break |
+| CR-009 | Specification amendment | SIM-SYS-064 | 2026-03-08 | New requirement: fast-track relay for stop requests |
+| CR-010 | Specification amendment | SIM-SYS-058 (amended) | 2026-03-08 | Extended to all trait method calls; faults propagate upward (catch, wrap, propagate — not absorb) |
+| CR-011 | Specification amendment | SIM-SYS-009 (amended), SIM-SYS-062 | 2026-03-08 | WorldState publish atomicity and tick barrier |
+| CR-012 | Specification amendment | SIM-SYS-010 (amended) | 2026-03-08 | Safe unload protocol for dynamic libraries |

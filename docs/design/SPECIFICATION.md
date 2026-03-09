@@ -20,18 +20,19 @@
 3. [Definitions and Abbreviations](#3-definitions-and-abbreviations)
 4. [System Architecture](#4-system-architecture)
 5. [Inter-partition Communication](#5-inter-partition-communication)
-6. [Multi-vehicle Operation](#6-multi-vehicle-operation)
-7. [Physics and Environment](#7-physics-and-environment)
-8. [GN&C Plugin Interface](#8-gnc-plugin-interface)
-9. [Vehicle Definition](#9-vehicle-definition)
-10. [Visualization](#10-visualization)
-11. [User Interface](#11-user-interface)
-12. [Configuration and Composition](#12-configuration-and-composition)
-13. [Distribution and Packaging](#13-distribution-and-packaging)
-14. [Telemetry](#14-telemetry)
-15. [Events](#15-events)
-16. [Verification and Traceability](#16-verification-and-traceability)
-17. [Requirements Traceability Matrix](#17-requirements-traceability-matrix)
+6. [Inter-layer Communication](#6-inter-layer-communication)
+7. [Multi-vehicle Operation](#7-multi-vehicle-operation)
+8. [Physics and Environment](#8-physics-and-environment)
+9. [GN&C Plugin Interface](#9-gnc-plugin-interface)
+10. [Vehicle Definition](#10-vehicle-definition)
+11. [Visualization](#11-visualization)
+12. [User Interface](#12-user-interface)
+13. [Configuration and Composition](#13-configuration-and-composition)
+14. [Distribution and Packaging](#14-distribution-and-packaging)
+15. [Telemetry](#15-telemetry)
+16. [Events](#16-events)
+17. [Verification and Traceability](#17-verification-and-traceability)
+18. [Requirements Traceability Matrix](#18-requirements-traceability-matrix)
 
 ---
 
@@ -108,9 +109,11 @@ operational mission data are outside the scope of this specification.
 | Scenario          | A layer 1 composition fragment describing mission-level configuration: vehicle definitions, physics sub-model selections, environment models, events, and initial conditions. A session composes one or more scenarios |
 | Session           | The layer 0 composition fragment describing a simulation run: transport mode, timing parameters, active partitions, and which scenarios to compose. A session is the top-level entry point for the compositor |
 | State snapshot    | A composition fragment produced by capturing the complete simulation state at a point in time. A state snapshot is not a distinct system primitive — it is a composition fragment whose fields happen to have been machine-generated rather than hand-authored. Snapshots are loadable, inheritable, and overridable using the same mechanisms as any other composition fragment (see SIM-SYS-044) |
+| Delivery semantic | A per-message-type specification of how the bus delivers messages to consumers. Latest-value retains only the most recent value (suitable for continuous state). Queued retains all messages in order (suitable for requests that must not be dropped). Declared in the contract crate alongside the type. See SIM-SYS-063 |
 | Direct signal     | A safety-critical signal type declared in a contract crate that bypasses the compositor relay chain within that contract crate's hierarchy and reaches the declaring crate's orchestrator directly. Scoped to the declaring crate's jurisdiction — does not propagate beyond the boundary when the system is embedded as a partition in an outer system. Reserved for scenarios where compositor suppression would be unsafe (e.g., emergency stop, hardware fault). See SIM-SYS-060 |
 | Layer-scoped bus  | A bus instance owned by the compositor at a given layer, connecting that layer's partitions. Each compositor owns a separate bus instance; sub-partitions publish only to their layer's bus, not to buses at other layers. Inter-layer communication occurs through compositor relay. See SIM-SYS-055 |
 | Relay authority   | The compositor's right to decide whether a message received on its inner bus is forwarded to the outer bus. The compositor may relay as-is, transform, suppress, or aggregate messages before re-emitting them. See SIM-SYS-057 |
+| Tick lifecycle    | The three-phase execution model for each simulation tick: Phase 1 (pre-tick processing: direct signals, spawn/despawn, dump/load, WorldState assembly, buffer swap), Phase 2 (partition stepping with intra-tick message isolation), Phase 3 (post-tick processing: event evaluation, output collection, bus request processing, relay). See SIM-SYS-062 |
 | VehicleId         | A runtime-unique identifier assigned to a simulated vehicle instance       |
 | VehicleTypeId     | A stable string identifier for a vehicle design (e.g., `"cessna172"`)     |
 | WGS84             | World Geodetic System 1984 — standard geodetic reference frame             |
@@ -347,6 +350,73 @@ the same pattern.
 
 ---
 
+### SIM-SYS-063 — Bus Delivery Semantics
+
+**Statement:** The bus shall support two delivery semantics per message type, specified
+in the contract crate alongside the type declaration:
+
+(a) **Latest-value:** The bus retains only the most recently published value for each
+(message type, VehicleId) pair. A consumer reading the bus always receives the latest
+published value. No backlog accumulates. This semantic is suitable for continuous state
+messages.
+
+(b) **Queued:** The bus retains all published messages in order. A consumer receives
+every message published since its last read. The queue shall be bounded with a
+configurable capacity. If the bound is reached, the compositor shall log a warning and
+the producer shall block until space is available. This semantic is suitable for request
+messages where every instance must be processed.
+
+The delivery semantic for each message type shall be declared in the contract crate as
+part of the type's interface contract and enforced identically across all transport
+modes. The following standard message types shall use the indicated semantics:
+
+| Message Type | Delivery Semantic | Rationale |
+|---|---|---|
+| PlantState, WorldState, EnvState | Latest-value | Consumers need current state, not history |
+| GNCCommand | Latest-value | Commands are instantaneous; stale commands are incorrect |
+| ExecutionStateRequest | Queued | Every request must reach the arbitrator |
+| VehiclePlantVizState | Latest-value | Visualization needs current frame, not backlog |
+| Direct signals | Queued | Safety-critical, must not be dropped |
+
+Contract crates at deeper layers may declare additional message types with either
+semantic, following the same pattern.
+
+**Rationale:** The specification defines three transport modes (SIM-SYS-005) that must
+produce identical results but does not address what happens when a producer publishes
+faster than a consumer reads. Under async transport with partitions at different rates
+(SIM-SYS-013: physics at 1 kHz, visualization at 60 Hz), the physics partition produces
+approximately 16 messages for every one the visualization partition reads. Without
+specified delivery semantics, different transport implementations make different
+choices — unbounded buffers cause memory exhaustion, dropping messages causes missed
+`ExecutionStateRequest` messages, and blocking producers changes timing behavior. Each
+of these choices produces different observable behavior, violating transport
+independence. Latest-value delivery for continuous state eliminates backlog without data
+loss (the consumer always wants the current value, not historical values). Queued
+delivery for request messages ensures correctness (every `ExecutionStateRequest` reaches
+the arbitrator). Declaring the semantic in the contract crate alongside the type makes
+bus behavior part of the interface contract rather than a transport implementation
+detail.
+
+**Verification Expectations:**
+- Pass: A message type declared as latest-value in the contract crate is delivered as
+  latest-value under all three transport modes — no message backlog accumulates.
+- Pass: A message type declared as queued in the contract crate delivers every published
+  message to the consumer, in order, under all three transport modes.
+- Pass: Under async transport with physics at 1 kHz and visualization at 60 Hz, the
+  visualization partition receives the latest `VehiclePlantVizState` without a growing
+  backlog of 16:1 messages.
+- Pass: Under async transport, every `ExecutionStateRequest` emitted by a partition is
+  received by the orchestrator, regardless of message rate or timing.
+- Pass: When a queued channel reaches its bound, the producer blocks and a warning is
+  logged; no messages are silently dropped.
+- Fail: A transport implementation drops `ExecutionStateRequest` messages to maintain
+  throughput.
+- Fail: A transport implementation maintains an unbounded backlog for latest-value
+  message types, causing memory growth proportional to simulation duration.
+- Fail: The delivery semantic for a message type varies across transport modes.
+
+---
+
 ## 6. Inter-layer Communication
 
 ---
@@ -467,36 +537,50 @@ to an alternative sub-partition implementation) without propagating to the outer
 
 ### SIM-SYS-058 — Compositor Fault Handling
 
-**Statement:** When a sub-partition faults during execution — returning an error from a
-trait method call, panicking, or timing out — the compositor at that layer shall be
-responsible for the response. Faults are a compositor-internal concern; there shall be no
-fault-specific bus channel or message type. The compositor shall catch the fault and
-decide the response: emit a typed request on its bus (e.g., `ExecutionStateRequest::Stop`
-with fault context), fall back to an alternative implementation, or log and continue.
-The outer layer shall see only the compositor's decision (a normal typed message), not
-the raw fault from the sub-partition.
+**Statement:** When a sub-partition faults during any trait method call — including
+`step()`, `init()`, `shutdown()`, `contribute_state()`, and `load_state()` — by
+returning an error, panicking, or timing out, the compositor at that layer shall catch
+the fault, log it with the faulting sub-partition's identity and layer depth, and
+propagate the error to the outer layer by returning an error from the compositor's own
+trait method call. The error shall include the compositor's context (which sub-partition
+faulted, during which operation) but the failure itself shall not be suppressed — it
+cascades through the compositor chain until the orchestrator receives it and stops the
+simulation with a clear diagnostic. There shall be no fault-specific bus channel or
+message type; the compositor's error return from its own trait call is the propagation
+mechanism.
 
-**Rationale:** A separate fault channel or fault message type would create a parallel
-communication path with its own transport, relay, and arbitration semantics — complexity
-that is unnecessary because the compositor already has a direct call-and-return
-relationship with its sub-partitions. The compositor's response to a fault is a domain
-decision (stop, fall back, continue), not a routing decision, and belongs in compositor
-logic rather than bus infrastructure. Exposing raw faults to the outer layer would break
-encapsulation: the outer layer would see implementation details of a partition's internal
-decomposition. If richer fault context is needed at the outer layer for diagnostics, the
-compositor can include it in the payload of its typed request or publish a diagnostic
-message — using the existing message system, not a new fault channel.
+**Rationale:** A sub-partition fault means the simulation is in an invalid state.
+Silently continuing without a failed physics sub-model produces incorrect results;
+silently omitting a partition's state from a snapshot produces a snapshot that loses
+data on reload; running after a failed `init()` means the system was never correctly
+assembled. The compositor's role in fault handling is to catch raw panics (preventing
+undefined behavior from escaping), add diagnostic context (which partition, which layer,
+which operation), and propagate a clean error — not to absorb the failure. The outer
+layer sees the compositor's error return, not the raw panic, preserving encapsulation of
+the internal structure while ensuring the failure is visible. A separate fault channel
+or fault message type would create a parallel communication path with its own transport,
+relay, and arbitration semantics — complexity that is unnecessary because the
+compositor's call-and-return relationship with the outer layer already provides an
+error propagation path.
 
 **Verification Expectations:**
 - Pass: A sub-partition returning an error from `step()` is caught by the compositor;
-  the compositor emits `ExecutionStateRequest::Stop` on its bus, which is relayed to the
-  orchestrator through the normal relay chain.
-- Pass: A compositor with an available fallback implementation switches to it after a
-  sub-partition fault, and the outer layer observes no interruption.
-- Pass: The compositor logs the fault with the faulting sub-partition's identity and the
-  error details, regardless of the chosen response.
-- Fail: A sub-partition fault propagates directly to the outer layer as a raw error,
-  panic, or unhandled exception visible outside the compositor.
+  the compositor returns an error from its own `step()` call, which cascades to the
+  orchestrator and stops the simulation.
+- Pass: A sub-partition panicking during `init()` is caught by the compositor; the
+  compositor returns an error from its own `init()` call, preventing the simulation
+  from starting.
+- Pass: A sub-partition returning an error from `contribute_state()` is caught by the
+  compositor; the compositor returns an error from its own `contribute_state()` call,
+  and the dump operation fails with a diagnostic identifying the faulting sub-partition.
+- Pass: The error returned by the compositor includes context identifying the faulting
+  sub-partition's identity, layer depth, and the operation that faulted.
+- Pass: The compositor logs the fault with full details regardless of whether the outer
+  layer also logs it.
+- Fail: A sub-partition fault is silently absorbed by the compositor and the simulation
+  continues running with missing or degraded partition output.
+- Fail: A sub-partition fault propagates as a raw panic or unhandled exception without
+  compositor context wrapping.
 - Fail: A dedicated fault bus or fault message channel exists alongside the regular bus.
 
 ---
@@ -600,6 +684,145 @@ partition would.
 
 ---
 
+### SIM-SYS-062 — Compositor Tick Lifecycle
+
+**Statement:** The compositor at each layer shall execute each simulation tick as a
+three-phase lifecycle. All transport modes shall enforce this lifecycle identically.
+
+**Phase 1 — Pre-tick processing (between tick N-1 and tick N):**
+
+1. Check for pending direct signals (SIM-SYS-060) and process them.
+2. Process pending spawn and despawn requests (SIM-SYS-010). Spawned vehicles become
+   active; despawned vehicles are removed and their resources released.
+3. Process pending dump and load requests (SIM-SYS-045). Dump invokes
+   `contribute_state()` on all partitions using post-tick-N-1 state. Load replaces
+   partition state via `load_state()`.
+4. Assemble WorldState from tick N-1 partition outputs and publish it on the bus
+   (SIM-SYS-009). Swap the read/write buffers: the read buffer now contains tick N-1
+   outputs; the write buffer is cleared to receive tick N outputs.
+5. Publish ExecutionState and shared context on the bus.
+
+**Phase 2 — Partition stepping:**
+
+For each partition in the defined step order:
+
+1. The partition reads inter-partition messages from the read buffer (tick N-1 outputs).
+   A message published by partition A during tick N-1 is visible; a message published by
+   partition A during the current tick N is not visible to any other partition until tick
+   N+1.
+2. The compositor calls `partition.step(dt)`. The partition writes its outputs to the
+   write buffer (tick N outputs).
+3. After each partition's `step()` returns, the compositor checks for pending direct
+   signals and processes them before stepping the next partition.
+
+**Phase 3 — Post-tick processing:**
+
+1. Evaluate all event conditions against the partition state as it existed at the
+   beginning of the tick (pre-step state), before any event actions have been applied
+   (SIM-SYS-035 through SIM-SYS-039). Collect the set of events whose conditions are
+   satisfied. Apply triggered event actions in TOML declaration order. An action's side
+   effects are not visible to other event conditions until the following tick.
+2. Collect tick N outputs from all partitions.
+3. Process bus requests (ExecutionStateRequest, etc.) received during this tick.
+   Arbitrate conflicting requests per SIM-SYS-043.
+4. Relay qualified requests to the outer bus per SIM-SYS-057.
+5. Check for pending direct signals.
+
+The intra-tick message isolation guarantee — that no partition sees another partition's
+current-tick output during Phase 2 — shall hold regardless of step order, thread
+scheduling, and transport mode. This eliminates ordering sensitivity: the simulation
+result is identical regardless of which partition steps first.
+
+**Rationale:** The specification defines what is communicated between partitions but
+prior to this requirement did not fully define when communication becomes visible
+relative to the step loop. Under in-process synchronous transport, the compositor's
+sequential `step()` calls impose a natural ordering that makes visibility implicit. Under
+async and network transport, partitions may step concurrently or in different orders,
+and messages may arrive at non-deterministic times. Without an explicit tick lifecycle,
+different transport implementations make different choices about message visibility,
+producing different simulation results — violating the transport independence guarantee
+(SIM-SYS-005).
+
+The double-buffered approach (partitions read from tick N-1, write to tick N) is the
+simplest model that eliminates ordering sensitivity. No partition sees another's
+current-tick output, so the result is the same whether partitions step sequentially,
+concurrently, or in any order. This makes the transport independence guarantee trivially
+enforceable for intra-tick data flow. The tick barrier (all partitions complete before
+WorldState assembly) ensures temporal consistency for WorldState (SIM-SYS-009) and state
+dumps (SIM-SYS-045). Direct signal polling between partition steps (SIM-SYS-060) gives
+safety-critical signals a worst-case latency of one partition's step duration rather
+than one full tick, while avoiding reentrancy hazards — the compositor checks signals
+while it has exclusive control, not while holding mutable references into partition
+state.
+
+Snapshot evaluation of event conditions (Phase 3, step 1) eliminates event ordering
+sensitivity: reordering event entries in TOML does not change which events fire, only
+the order in which their actions are applied. This is consistent with the double-buffered
+approach — just as partitions see a snapshot of inter-partition data, events see a
+snapshot of partition state.
+
+**Verification Expectations:**
+- Pass: Two partitions exchanging data via the bus produce identical simulation results
+  regardless of step order, when the step order is varied between test runs.
+- Pass: A message published by partition A during tick N is not visible to partition B
+  during tick N; partition B reads A's tick N output during tick N+1.
+- Pass: Under async transport, the compositor waits for all partition `step()` calls to
+  complete before assembling WorldState.
+- Pass: Direct signals are checked at least once between each pair of partition
+  `step()` calls; the worst-case signal latency is one partition's step duration.
+- Pass: Event conditions are evaluated against pre-step state; an event action that
+  modifies a signal does not cause a second event conditioned on that signal to fire in
+  the same tick.
+- Pass: Spawn and despawn requests are processed in Phase 1; all partitions in the
+  subsequent tick see the updated vehicle set.
+- Pass: Dump requests during Running are processed in Phase 1 at a tick boundary; all
+  contributed state corresponds to the same completed tick.
+- Pass: The same scenario produces identical results under synchronous, async, and
+  network transport modes (within floating-point determinism limits).
+- Fail: A partition reads another partition's output from the current tick during
+  Phase 2.
+- Fail: Event conditions are evaluated after event actions have been applied, causing
+  cascading event firing within a single tick.
+- Fail: WorldState is assembled before all partitions have completed their current tick.
+
+---
+
+### SIM-SYS-064 — Compositor Fast-Track Relay for Stop Requests
+
+**Statement:** When a compositor receives an `ExecutionStateRequest::Stop` on its inner
+bus, it shall relay the request to the outer bus immediately — during the current tick's
+post-tick processing (Phase 3 of SIM-SYS-062), not deferred to the next tick. After
+relaying a stop request, the compositor may skip stepping the requesting partition on
+subsequent ticks until the execution state transition is applied by the orchestrator.
+
+**Rationale:** Under the normal relay chain (SIM-SYS-057), a request emitted at layer N
+may take up to N physics ticks to reach the orchestrator because each compositor
+processes its inner bus during its own `step()` and relays on the next outer-bus cycle.
+For stop requests — which are typically triggered by safety limit exceedances or
+unrecoverable errors — this latency means N ticks of continued physics integration in a
+potentially invalid state, with the partition producing outputs that other partitions
+consume. Fast-track relay reduces the worst-case latency for stop requests to 1 tick
+regardless of layer depth. Skipping the requesting partition's subsequent steps prevents
+it from producing outputs from an invalid state while the stop propagates through the
+relay chain.
+
+**Verification Expectations:**
+- Pass: A sub-partition at layer 2 emitting `ExecutionStateRequest::Stop` causes the
+  stop request to reach the orchestrator within 1 tick, not 2 ticks.
+- Pass: After a compositor relays a fast-tracked stop request, the requesting
+  sub-partition is not stepped on subsequent ticks until the orchestrator applies the
+  stop transition.
+- Pass: A stop request fast-tracked from layer 2 reaches the orchestrator in the same
+  number of ticks as a stop request from layer 1.
+- Pass: Non-stop requests (`Pause`, `Resume`) continue to follow normal relay timing —
+  fast-track applies only to stop requests.
+- Fail: A stop request from a layer 2 sub-partition takes 2 ticks to reach the
+  orchestrator because each compositor defers relay to its next step cycle.
+- Fail: After emitting a stop request, the sub-partition continues to be stepped and
+  produces outputs from an invalid state for multiple ticks.
+
+---
+
 ## 7. Multi-vehicle Operation
 
 ---
@@ -651,21 +874,39 @@ content, which is fragile.
 
 **Statement:** The system shall publish an aggregated `WorldState` message each
 simulation tick containing the `PlantState` of all currently active vehicles. This
-message shall be available to all partitions via the active transport.
+message shall be available to all partitions via the active transport. WorldState shall
+be published as an atomic unit: a consumer reading WorldState shall always receive a
+complete, internally consistent snapshot — never a partially assembled aggregate. The
+compositor shall not publish WorldState for tick N until all partitions at that layer
+have completed their tick N step and published their outputs (see SIM-SYS-062). The bus
+implementation shall ensure this atomicity regardless of transport mode.
 
 **Rationale:** GN&C algorithms for formation flying, collision avoidance, and
 cooperative tasking require awareness of peer vehicle states. A broadcast `WorldState`
 provides this without requiring point-to-point subscriptions between individual GN&C
-instances.
+instances. Atomicity is critical under async and network transport: without it, a
+consumer could observe a partially updated WorldState containing some vehicles at tick N
+and others at tick N-1, causing formation-keeping and collision avoidance algorithms to
+compute against temporally inconsistent peer data. The tick barrier (SIM-SYS-062)
+ensures that all partition outputs for tick N are available before WorldState assembly;
+the atomicity guarantee ensures that the assembled result is delivered as an indivisible
+unit.
 
 **Verification Expectations:**
 - Pass: In a two-vehicle scenario, the `WorldState` received by each GN&C plugin
   contains entries for both vehicles.
 - Pass: When a vehicle is despawned, it is absent from the `WorldState` broadcast in
   all subsequent ticks.
+- Pass: All `PlantState` entries in a single `WorldState` correspond to the same
+  simulation tick — no entry is from a previous tick while another is from the current
+  tick.
+- Pass: Under async transport, a consumer never observes a `WorldState` containing a
+  subset of vehicles' updated states while others are stale.
 - Fail: A GN&C plugin must subscribe to individual per-vehicle topics to obtain the
   states of peer vehicles; no aggregate is available.
 - Fail: `WorldState` is broadcast at a rate different from the physics tick rate.
+- Fail: A consumer reads a `WorldState` that contains `PlantState` from two different
+  simulation ticks.
 
 ---
 
@@ -674,20 +915,48 @@ instances.
 **Statement:** The system shall support spawning and despawning of vehicle instances
 during an active simulation session. Spawning shall load the specified plant model and
 GN&C plugin and initialize the vehicle to provided initial conditions. Despawning shall
-cleanly unload all associated resources.
+cleanly unload all associated resources. Spawn and despawn requests shall be processed
+at tick boundaries (see SIM-SYS-062, Phase 1): after all partitions have completed
+their current tick step and before any partition begins the next tick. All partitions
+within a tick shall observe the same set of active vehicles. A spawn request received
+during tick N shall result in the vehicle being active and included in WorldState
+starting at tick N+1. A despawn request received during tick N shall result in the
+vehicle being removed before tick N+1 begins. Before unloading a GN&C plugin's shared
+library, the system shall ensure: (a) no thread is executing code from the library,
+(b) no function pointers, trait objects, or callbacks referencing the library's code
+remain reachable, and (c) the plugin's `shutdown()` method has returned successfully.
+Under async transport, the thread executing the plugin's `step()` shall have joined
+before unload proceeds.
 
 **Rationale:** Dynamic vehicle lifecycle enables scenarios in which aircraft launch,
 complete their mission, and recover or are destroyed, without requiring a full simulation
 restart. It also supports incremental scenario construction during interactive use.
+Processing spawn and despawn at tick boundaries ensures that all partitions observe a
+consistent vehicle set for the entirety of each tick, regardless of transport mode. Under
+async transport, a spawn or despawn request arriving between partition steps could cause
+some partitions to see the vehicle while others do not, producing an inconsistent
+WorldState. Tick-boundary processing eliminates this race. Safe library unload is
+necessary because dynamic loading is inherently `unsafe` — unloading a library while
+code is executing or while dangling function pointers remain causes undefined behavior
+that bypasses Rust's safety guarantees.
 
 **Verification Expectations:**
 - Pass: A vehicle spawned mid-simulation at specified initial conditions begins
   publishing `PlantState` messages on the subsequent tick.
 - Pass: After despawning a vehicle, no further messages bearing its `VehicleId` appear
   on the bus and its Bevy entity is removed from the world.
+- Pass: All partitions stepped within the same tick observe the same set of active
+  vehicles — no partition sees a spawned vehicle before the tick boundary at which the
+  spawn is processed.
+- Pass: A despawn request received during tick N is processed before tick N+1; no
+  partition observes the despawned vehicle during tick N+1.
+- Pass: After despawning, the GN&C plugin's shared library is unloaded only after its
+  execution thread has joined and its `shutdown()` method has returned.
 - Fail: Spawning a second vehicle during a running simulation requires a restart.
 - Fail: Despawning a vehicle leaves its GN&C dynamic library loaded in process memory
   (verified by library handle count or equivalent).
+- Fail: Under async transport, one partition observes a newly spawned vehicle in tick N
+  while another partition does not, because the spawn was processed mid-tick.
 
 ---
 
@@ -1221,23 +1490,35 @@ as a composition fragment (SIM-SYS-044). A load operation shall accept a state s
 composition fragment and restore the simulation to the captured state, replacing the
 current state of all partitions and vehicles. Dump shall be invocable during any
 execution state (Running, Paused, Stopped). Load shall be invocable from the Paused or
-Stopped execution states; loading while Running shall not be supported. Both operations
-shall be requestable via the simulation bus, the UI partition, and the event system
-(as event actions), consistent with the uniform request mechanisms used for execution
-state transitions (SIM-SYS-041, SIM-SYS-042).
+Stopped execution states; loading while Running shall not be supported. When the
+simulation is in the Running state, the compositor shall process dump requests at a tick
+boundary (see SIM-SYS-062, Phase 1) — after all partitions have completed their current
+tick and before any partition begins the next tick. The `contribute_state()` calls shall
+observe the state produced by the most recently completed tick. The "without interrupting
+physics integration" guarantee means the dump does not delay the current tick's
+computation — it occurs in the inter-tick gap. Both operations shall be requestable via
+the simulation bus, the UI partition, and the event system (as event actions), consistent
+with the uniform request mechanisms used for execution state transitions (SIM-SYS-041,
+SIM-SYS-042).
 
 **Rationale:** Dump and load are the operational interface to state snapshots. Dump
 during a Running simulation enables capturing transient conditions without pausing;
 dump while Paused or Stopped enables deliberate checkpointing. Restricting load to
-non-Running states prevents mid-tick state corruption. Making dump and load available
-through the same request channels as execution state transitions — bus messages, UI
-controls, and event actions — keeps the operational surface uniform. An event action
-`"state_dump"` with a path parameter allows scenario authors to script automatic
-checkpoints at specific times or conditions without UI interaction.
+non-Running states prevents mid-tick state corruption. Processing dump at tick boundaries
+ensures temporal consistency: all partition states in the snapshot correspond to the same
+completed tick. Without this guarantee, a dump during async execution could capture
+partition A at tick N and partition B at tick N-1, producing a snapshot that initializes
+the simulation to an internally inconsistent state on reload. Making dump and load
+available through the same request channels as execution state transitions — bus
+messages, UI controls, and event actions — keeps the operational surface uniform. An
+event action `"state_dump"` with a path parameter allows scenario authors to script
+automatic checkpoints at specific times or conditions without UI interaction.
 
 **Verification Expectations:**
 - Pass: A dump operation invoked while the simulation is Running produces a valid
   snapshot fragment without interrupting physics integration.
+- Pass: A dump captured during Running contains state from a single completed tick —
+  all partition contributions correspond to the same simulation time.
 - Pass: A dump operation invoked while Paused produces a snapshot fragment, and
   loading that fragment in a new session produces identical initial state.
 - Pass: A load operation invoked while Paused replaces all vehicle and partition state
@@ -1248,6 +1529,8 @@ checkpoints at specific times or conditions without UI interaction.
   ignored), and the simulation continues unaffected.
 - Fail: Dump or load requires a dedicated API distinct from the bus message and event
   action mechanisms used for execution state control.
+- Fail: A dump captured during Running contains partition states from different
+  simulation ticks.
 
 ---
 
@@ -1735,9 +2018,12 @@ all other inter-layer requests.
 **Statement:** When the orchestrator receives multiple `ExecutionStateRequest` messages
 within the same physics tick that request conflicting transitions, it shall apply the
 following deterministic priority order: (1) Stop takes priority over all other requests.
-(2) Pause takes priority over Resume. (3) Among requests of equal priority, the first
-received shall be applied. All received requests and the resolution outcome shall be
-logged with the requesting partition identities.
+(2) Pause takes priority over Resume. (3) Among requests of equal priority, the request
+from the partition with the numerically lowest partition identifier shall be designated
+the primary request for logging purposes. All valid requests of the same type shall be
+applied (the outcome is the same regardless of which is designated primary). All
+received requests and the resolution outcome shall be logged with the requesting
+partition identities.
 
 **Rationale:** In a fractally partitioned system, any partition at any layer may
 generate events that request execution state changes. Concurrent events may independently
@@ -1746,7 +2032,10 @@ pause while a physics safety limit simultaneously requests stop. Without a deter
 resolution policy, the resulting execution state would depend on message ordering, which
 varies with transport mode and scheduling. Prioritizing stop over pause reflects the
 principle that safety-critical transitions should not be overridden by less severe
-requests.
+requests. Tie-breaking by partition identifier rather than arrival order ensures that
+audit logs are deterministic across transport modes — arrival order is
+transport-dependent, but partition identifiers are stable. This supports test
+reproducibility and audit comparability across deployment configurations.
 
 **Verification Expectations:**
 - Pass: When a physics partition emits `ExecutionStateRequest::Stop` and a GN&C
@@ -1755,12 +2044,19 @@ requests.
 - Pass: When a UI partition emits `ExecutionStateRequest::Resume` and a GN&C event
   emits `ExecutionStateRequest::Pause` in the same tick, the orchestrator transitions
   to Paused (if currently Paused, the pause wins and the state remains Paused).
+- Pass: When two partitions emit `ExecutionStateRequest::Pause` in the same tick, the
+  partition with the lower identifier is logged as the primary request; the outcome
+  (Paused) is the same regardless of which partition's message arrives first.
 - Pass: The orchestrator log for the tick includes both requests and identifies which
   was applied and which was superseded, with partition identities.
+- Pass: The audit log for a given scenario is identical across synchronous, async, and
+  network transport modes.
 - Fail: Conflicting requests in the same tick produce non-deterministic behavior
   depending on transport mode or thread scheduling.
 - Fail: A lower-priority request silently overrides a higher-priority request without
   logging.
+- Fail: Equal-priority requests from different partitions produce different audit log
+  entries depending on transport mode.
 
 ---
 
@@ -2258,3 +2554,6 @@ migrate on their own schedule while maintaining test coverage throughout the tra
 | SIM-SYS-059 | Recursive State Contribution        | TF-SRS-006                |
 | SIM-SYS-060 | Direct Signals                      | TF-SRS-005, TF-SRS-006    |
 | SIM-SYS-061 | Contract-crate-scoped Event Action Vocabulary | TF-SRS-001 through 006    |
+| SIM-SYS-062 | Compositor Tick Lifecycle           | TF-SRS-005, TF-SRS-006    |
+| SIM-SYS-063 | Bus Delivery Semantics              | TF-SRS-005                |
+| SIM-SYS-064 | Compositor Fast-Track Relay for Stop Requests | TF-SRS-005, TF-SRS-006 |

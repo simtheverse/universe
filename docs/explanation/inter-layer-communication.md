@@ -461,3 +461,16 @@ the relay chain rather than replacing it — normal communication uses relay,
 safety-critical communication uses direct signals. When the system is embedded as a
 partition, its direct signals remain internal — the embedding system defines its own
 safety mechanisms independently.
+
+### Why the tick lifecycle exists
+
+The inter-layer communication architecture defines *what* is communicated and *who*
+has authority over it, but does not by itself determine *when* messages become visible
+to other partitions. The compositor tick lifecycle (SIM-SYS-062) fills this gap: it
+defines a three-phase execution model with double-buffered message isolation, tick
+barriers for WorldState assembly, and direct signal polling between partition steps.
+Without this lifecycle, different transport modes could make different visibility
+choices, violating transport independence. Fast-track stop relay (SIM-SYS-064) reduces
+worst-case stop latency from N ticks to 1 tick regardless of layer depth. See the
+[tick lifecycle and synchronization](tick-lifecycle-and-synchronization.md) explainer
+for full details.

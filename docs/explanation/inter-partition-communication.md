@@ -84,6 +84,17 @@ partition logic cannot depend on timing assumptions, message ordering quirks, or
 transport-specific side effects. If a scenario produces different results under different
 transports, something is wrong with the partition logic, not the transport.
 
+Two additional mechanisms make this constraint enforceable in practice. The compositor
+tick lifecycle (SIM-SYS-062) defines a double-buffered execution model: within a single
+tick, all partitions read from the previous tick's outputs and write to the current
+tick's buffer. No partition sees another partition's current-tick output, so the result
+is independent of step order — which is what varies across transport modes. Bus delivery
+semantics (SIM-SYS-063) specify per-message-type behavior (latest-value for continuous
+state, queued for requests), ensuring that all transport implementations handle producer-
+consumer rate mismatches identically. See the
+[tick lifecycle and synchronization](tick-lifecycle-and-synchronization.md) explainer
+for full details.
+
 ## What emerges from these principles
 
 ### Requests, not mutations

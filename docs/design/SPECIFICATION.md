@@ -533,7 +533,10 @@ the internal structure while ensuring the failure is visible. A separate fault c
 or fault message type would create a parallel communication path with its own transport,
 relay, and arbitration semantics — complexity that is unnecessary because the
 compositor's call-and-return relationship with the outer layer already provides an
-error propagation path.
+error propagation path. Graceful degradation (e.g., falling back to an alternative
+partition implementation on fault) is not included — there is no current use case that
+requires it. If one arises, a dedicated requirement can be added without weakening the
+cascade guarantee defined here.
 
 **Verification Expectations:**
 - Pass: A sub-partition returning an error from `step()` is caught by the compositor;
@@ -659,7 +662,10 @@ partition would.
 ### SIM-SYS-062 — Compositor Tick Lifecycle
 
 **Statement:** The compositor at each layer shall execute each simulation tick as a
-three-phase lifecycle. All transport modes shall enforce this lifecycle identically.
+three-phase lifecycle. All transport modes shall enforce this lifecycle identically. A
+partition that is itself a compositor shall execute its own complete three-phase tick
+lifecycle within the outer compositor's Phase 2 `step()` call for that partition —
+the fractal structure nests tick lifecycles recursively.
 
 **Phase 1 — Pre-tick processing (between tick N-1 and tick N):**
 
@@ -676,7 +682,9 @@ three-phase lifecycle. All transport modes shall enforce this lifecycle identica
 
 **Phase 2 — Partition stepping:**
 
-For each partition in the defined step order:
+For each partition in the compositor's step order (a deterministic ordering defined by
+the compositor and stable across ticks; the mechanism by which the compositor determines
+this order is implementation-defined):
 
 1. The partition reads inter-partition messages from the read buffer (tick N-1 outputs).
    A message published by partition A during tick N-1 is visible; a message published by

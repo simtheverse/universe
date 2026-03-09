@@ -97,7 +97,18 @@ tick N outputs.
 
 ### Phase 2: Partition Stepping — Intra-tick Message Isolation
 
-Phase 2 is the core simulation work. The compositor calls `step(dt)` on each partition.
+Phase 2 is the core simulation work. The compositor calls `step(dt)` on each partition
+in a deterministic order that is stable across ticks (the mechanism by which the
+compositor determines this order is implementation-defined — e.g., dependency graph,
+declaration order). Because of double-buffering, the simulation result is independent
+of this order; it matters only for direct signal polling latency and audit log
+determinism.
+
+If a partition is itself a compositor, its `step()` call executes a complete nested
+three-phase tick lifecycle for its own sub-partitions. The fractal structure means tick
+lifecycles nest recursively — the outer compositor does not resume until the inner
+compositor's entire tick (all three phases) has completed.
+
 The key invariant is **intra-tick message isolation**:
 
 > A message published by partition A during tick N is not visible to any other partition

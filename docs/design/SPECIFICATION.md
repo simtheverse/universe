@@ -914,11 +914,15 @@ GN&C plugin and initialize the vehicle to provided initial conditions. Despawnin
 cleanly unload all associated resources such that, at the time the despawn operation
 is reported as complete, for every dynamically loaded module associated with the
 vehicle (including the GN&C plugin and any dynamically loaded plant model):
-(a) within the despawned vehicle's execution context, no threads are executing code
-from that module's binary; (b) the host retains no callable references (such as
-function pointers, callbacks, vtables, or handles) that are reachable from the
-despawned vehicle's execution context and would allow further execution of that
-module's code; and (c) if no other active vehicle continues to use the module (i.e.,
+(a) within the despawned vehicle's execution context (i.e., the set of host-managed
+threads, tasks, and callbacks that may execute code on behalf of that vehicle
+instance), no threads are executing code from that module's binary; (b) within the
+host's data structures for that vehicle instance (including any per-vehicle module
+handle tables, callback registries, thread entry points, and callback lists), the host
+retains no callable references (such as function pointers, callbacks, vtables, or
+handles) that would allow further execution of that module's code on behalf of the
+despawned vehicle; and (c) if no other active vehicle continues to use the module
+(i.e.,
 no other active vehicle retains callable references to it), its dynamic library has
 been unloaded by the host process. When a dynamically loaded module is shared among
 multiple active vehicles, the host shall ensure that the module is unloaded once it is

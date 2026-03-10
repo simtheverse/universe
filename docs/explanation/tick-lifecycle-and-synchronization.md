@@ -41,12 +41,13 @@ Every compositor — at every layer — executes each tick as three sequential p
  │  │ Process spawn/despawn requests          │  │
  │  │ Process dump/load requests              │  │
  │  │ Assemble WorldState from tick N-1       │  │
- │  │ Publish WorldState + ExecutionState     │  │
- │  │   (into read buffer for tick N)         │  │
+ │  │ Publish WorldState, ExecutionState,     │  │
+ │  │   and shared context (into write buf)  │  │
  │  │ Swap read/write buffers                 │  │
- │  │   read buffer = tick N-1 outputs +      │  │
- │  │     WorldState + ExecutionState         │  │
- │  │   write buffer = cleared for tick N     │  │
+ │  │   new read buf = tick N-1 outputs +     │  │
+ │  │     WorldState + ExecutionState +       │  │
+ │  │     shared context                      │  │
+ │  │   new write buf = cleared for tick N    │  │
  │  └─────────────────────────────────────────┘  │
  │                                               │
  │  Phase 2: Partition stepping                  │
@@ -97,13 +98,15 @@ comes from the same completed tick.
 publishes them as an atomic aggregate. The tick barrier ensures that no partition's
 output is missing or stale.
 
-**WorldState, ExecutionState, and shared context** are published into the read buffer
-for tick N — the buffer that partitions will read from during Phase 2. This ensures
-these values are stable and visible to all partitions throughout Phase 2.
+**WorldState, ExecutionState, and shared context** are published into the buffer that
+will become the read buffer for tick N after the upcoming buffer swap — the buffer
+that partitions will read from during Phase 2. This ensures these values are stable
+and visible to all partitions throughout Phase 2.
 
-**Buffer swap** transitions the double-buffer: the read buffer now contains tick N-1
-partition outputs plus the WorldState, ExecutionState, and shared context published
-above. A fresh write buffer is prepared for tick N outputs.
+**Buffer swap** transitions the double-buffer: after the swap, the read buffer for
+tick N contains tick N-1 partition outputs plus the WorldState, ExecutionState, and
+shared context published above, and a fresh write buffer is prepared for tick N
+outputs.
 
 ### Phase 2: Partition Stepping — Intra-tick Message Isolation
 

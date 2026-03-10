@@ -522,7 +522,7 @@ Implementations may enforce stricter (shorter) per-invocation deadlines than the
 maxima but shall not use longer deadlines.
 These deadlines are per call (not per simulation tick) and are measured using a
 monotonic clock. Deadline enforcement is defined in terms of the compositor's observable
-behaviour: when a per-invocation deadline expires, the compositor shall stop waiting for
+behavior: when a per-invocation deadline expires, the compositor shall stop waiting for
 the sub-partition's trait method call, record a timeout for that call, and proceed as if
 the call had returned an error. The specification does not require the compositor to
 synchronously preempt or forcibly cancel the timed-out computation; implementations may
@@ -914,15 +914,18 @@ GN&C plugin and initialize the vehicle to provided initial conditions. Despawnin
 cleanly unload all associated resources such that, at the time the despawn operation
 is reported as complete, for every dynamically loaded module associated with the
 vehicle (including the GN&C plugin and any dynamically loaded plant model):
-(a) no threads are executing code from that module's binary; (b) the host retains no
-callable references (such as function pointers, callbacks, vtables, or handles) that
-would allow further execution of that module's code; and (c) if the module's dynamic
-library is not shared with any other active vehicle, it has been unloaded by the host
-process. When a dynamically loaded module is shared among multiple active vehicles, the
-host shall ensure that the module is unloaded once it is no longer used by any vehicle
-(e.g., via reference-counting or an equivalent mechanism). Spawn and despawn
-requests shall be processed at tick boundaries (see SIM-SYS-062, Phase 1). All
-partitions within a tick shall observe the same set of active vehicles.
+(a) within the despawned vehicle's execution context, no threads are executing code
+from that module's binary; (b) the host retains no callable references (such as
+function pointers, callbacks, vtables, or handles) that are reachable from the
+despawned vehicle's execution context and would allow further execution of that
+module's code; and (c) if no other active vehicle continues to use the module (i.e.,
+no other active vehicle retains callable references to it), its dynamic library has
+been unloaded by the host process. When a dynamically loaded module is shared among
+multiple active vehicles, the host shall ensure that the module is unloaded once it is
+no longer used by any vehicle (e.g., via reference-counting or an equivalent
+mechanism). Spawn and despawn requests shall be processed at tick boundaries (see
+SIM-SYS-062, Phase 1). All partitions within a tick shall observe the same set of
+active vehicles.
 
 **Rationale:** Dynamic vehicle lifecycle enables scenarios in which aircraft launch,
 complete their mission, and recover or are destroyed, without requiring a full simulation

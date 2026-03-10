@@ -42,12 +42,12 @@ Every compositor — at every layer — executes each tick as three sequential p
  │  │ Process dump/load requests              │  │
  │  │ Assemble WorldState from tick N-1       │  │
  │  │ Publish WorldState, ExecutionState,     │  │
- │  │   and shared context (into write buf)  │  │
+ │  │   and shared context (into write buffer)│  │
  │  │ Swap read/write buffers                 │  │
- │  │   new read buf = tick N-1 outputs +     │  │
+ │  │   new read buffer = tick N-1 outputs +  │  │
  │  │     WorldState + ExecutionState +       │  │
  │  │     shared context                      │  │
- │  │   new write buf = cleared for tick N    │  │
+ │  │   new write buffer = cleared for tick N │  │
  │  └─────────────────────────────────────────┘  │
  │                                               │
  │  Phase 2: Partition stepping                  │

@@ -515,9 +515,11 @@ the fault, log it with the faulting sub-partition's identity and layer depth, an
 propagate the error to the outer layer by returning an error from the compositor's own
 trait method call. For the purposes of this requirement, a sub-partition is considered
 to have *timed out* on a given trait method call if that call does not return within a
-per-invocation elapsed-time deadline enforced by the compositor: by default, `step()` and
+per-invocation elapsed-time deadline enforced by the compositor: `step()` and
 `contribute_state()` calls shall each have a maximum duration of 50 ms, and `init()`,
 `load_state()`, and `shutdown()` calls shall each have a maximum duration of 500 ms.
+Implementations may enforce stricter (shorter) per-invocation deadlines than these
+maxima but shall not use longer deadlines.
 These deadlines are per call (not per simulation tick) and are measured using a
 monotonic clock. Deadline enforcement is defined in terms of the compositor's observable
 behaviour: when a per-invocation deadline expires, the compositor shall stop waiting for
@@ -914,8 +916,11 @@ is reported as complete, for every dynamically loaded module associated with the
 vehicle (including the GN&C plugin and any dynamically loaded plant model):
 (a) no threads are executing code from that module's binary; (b) the host retains no
 callable references (such as function pointers, callbacks, vtables, or handles) that
-would allow further execution of that module's code; and (c) the module's dynamic
-library has been unloaded by the host process. Spawn and despawn
+would allow further execution of that module's code; and (c) if the module's dynamic
+library is not shared with any other active vehicle, it has been unloaded by the host
+process. When a dynamically loaded module is shared among multiple active vehicles, the
+host shall ensure that the module is unloaded once it is no longer used by any vehicle
+(e.g., via reference-counting or an equivalent mechanism). Spawn and despawn
 requests shall be processed at tick boundaries (see SIM-SYS-062, Phase 1). All
 partitions within a tick shall observe the same set of active vehicles.
 

@@ -55,7 +55,7 @@ Every compositor — at every layer — executes each tick as three sequential p
  │  │ for each partition:                     │  │
  │  │   read from read buffer                 │  │
  │  │     (tick N-1 outputs, WorldState,      │  │
- │  │      ExecutionState)                    │  │
+ │  │      ExecutionState, shared context)    │  │
  │  │   step(dt)                              │  │
  │  │   write to tick N buffer                │  │
  │  │   check direct signals                  │  │

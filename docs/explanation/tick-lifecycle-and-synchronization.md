@@ -41,14 +41,20 @@ Every compositor — at every layer — executes each tick as three sequential p
  │  │ Process spawn/despawn requests          │  │
  │  │ Process dump/load requests              │  │
  │  │ Assemble WorldState from tick N-1       │  │
- │  │ Swap read/write buffers                 │  │
  │  │ Publish WorldState + ExecutionState     │  │
+ │  │   (into read buffer for tick N)         │  │
+ │  │ Swap read/write buffers                 │  │
+ │  │   read buffer = tick N-1 outputs +      │  │
+ │  │     WorldState + ExecutionState         │  │
+ │  │   write buffer = cleared for tick N     │  │
  │  └─────────────────────────────────────────┘  │
  │                                               │
  │  Phase 2: Partition stepping                  │
  │  ┌─────────────────────────────────────────┐  │
  │  │ for each partition:                     │  │
- │  │   read from tick N-1 buffer             │  │
+ │  │   read from read buffer                 │  │
+ │  │     (tick N-1 outputs, WorldState,      │  │
+ │  │      ExecutionState)                    │  │
  │  │   step(dt)                              │  │
  │  │   write to tick N buffer                │  │
  │  │   check direct signals                  │  │
@@ -91,9 +97,13 @@ comes from the same completed tick.
 publishes them as an atomic aggregate. The tick barrier ensures that no partition's
 output is missing or stale.
 
-**Buffer swap** transitions the double-buffer: the write buffer from tick N-1 (now
-complete) becomes the read buffer for tick N. A fresh write buffer is prepared for
-tick N outputs.
+**WorldState, ExecutionState, and shared context** are published into the read buffer
+for tick N — the buffer that partitions will read from during Phase 2. This ensures
+these values are stable and visible to all partitions throughout Phase 2.
+
+**Buffer swap** transitions the double-buffer: the read buffer now contains tick N-1
+partition outputs plus the WorldState, ExecutionState, and shared context published
+above. A fresh write buffer is prepared for tick N outputs.
 
 ### Phase 2: Partition Stepping — Intra-tick Message Isolation
 

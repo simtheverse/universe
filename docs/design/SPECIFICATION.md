@@ -515,14 +515,26 @@ the fault, log it with the faulting sub-partition's identity and layer depth, an
 propagate the error to the outer layer by returning an error from the compositor's own
 trait method call. For the purposes of this requirement, a sub-partition is considered
 to have *timed out* on a given trait method call if that call does not return within a
-per-invocation wall-clock deadline enforced by the compositor: by default, `step()` and
+per-invocation elapsed-time deadline enforced by the compositor: `step()` and
 `contribute_state()` calls shall each have a maximum duration of 50 ms, and `init()`,
 `load_state()`, and `shutdown()` calls shall each have a maximum duration of 500 ms.
+Implementations may enforce stricter (shorter) per-invocation deadlines than these
+maxima but shall not use longer deadlines.
 These deadlines are per call (not per simulation tick) and are measured using a
-monotonic clock. The compositor is responsible for enforcing these deadlines for its
-sub-partitions and for treating a timeout exactly as a fault equivalent to an error
-return or panic. The error shall include the compositor's context (which sub-partition
-faulted, during which operation) but the failure itself shall not be suppressed — it
+monotonic clock. Deadline enforcement is defined in terms of the compositor's observable
+behavior: when a per-invocation deadline expires, the compositor shall stop waiting for
+the sub-partition's trait method call, record a timeout for that call, and proceed as if
+the call had returned an error. The specification does not require the compositor to
+synchronously preempt or forcibly cancel the timed-out computation; implementations may
+rely on cooperative cancellation, thread or process isolation, or other containment
+mechanisms. However, an implementation shall ensure that any work performed by a
+sub-partition after its call has been declared timed out cannot affect the correctness
+of subsequent compositor decisions for that simulation run (for example, by confining
+the call to an isolated worker that is discarded after a timeout). The compositor is
+responsible for enforcing these deadlines for its sub-partitions and for treating a
+timeout exactly as a fault equivalent to an error return or panic. The error shall
+include the compositor's context (which sub-partition faulted, during which operation)
+but the failure itself shall not be suppressed — it
 cascades through the compositor chain until the orchestrator receives it and stops the
 simulation with a clear diagnostic. There shall be no fault-specific bus channel or
 message type; the compositor's error return from its own trait call is the propagation
@@ -683,14 +695,17 @@ the fractal structure nests tick lifecycles recursively.
    `contribute_state()` on all partitions using post-tick-N-1 state. Load replaces
    partition state via `load_state()`.
 4. Assemble WorldState from tick N-1 partition outputs and publish it on the bus
-   (SIM-SYS-009).
-5. Publish ExecutionState and shared context on the bus into the **read buffer for
-   tick N** — the buffer that will be visible to all partitions during Phase 2.
+   (SIM-SYS-009) into the **current write buffer**.
+5. Publish ExecutionState and shared context on the bus into the **current write
+   buffer** — this is the buffer that will become the read buffer for tick N after
+   the swap in step 6 and will be visible to all partitions during Phase 2.
    WorldState, ExecutionState, and shared context are thus stable and readable by all
    partitions throughout Phase 2 of tick N.
-6. Swap the read/write buffers: the read buffer now contains tick N-1 partition
-   outputs plus the WorldState, ExecutionState, and shared context published in steps
-   4–5; the write buffer is cleared to receive tick N outputs.
+6. Swap the read/write buffers: the **new read buffer** (the buffer that was the
+   write buffer prior to this step) now contains tick N-1 partition outputs plus the
+   WorldState, ExecutionState, and shared context published in steps 4–5; the **new
+   write buffer** (the buffer that was the read buffer prior to this step) is cleared
+   to receive tick N outputs.
 
 **Phase 2 — Partition stepping:**
 
@@ -897,12 +912,24 @@ could observe vehicle states from different ticks.
 during an active simulation session. Spawning shall load the specified plant model and
 GN&C plugin and initialize the vehicle to provided initial conditions. Despawning shall
 cleanly unload all associated resources such that, at the time the despawn operation
-is reported as complete: (a) no threads are executing code from the plugin's binary;
-(b) the host retains no callable references (such as function pointers, callbacks,
-vtables, or handles) that would allow further execution of plugin code; and (c) the
-plugin's dynamic library has been unloaded by the host process. Spawn and despawn
-requests shall be processed at tick boundaries (see SIM-SYS-062, Phase 1). All
-partitions within a tick shall observe the same set of active vehicles.
+is reported as complete, for every dynamically loaded module associated with the
+vehicle (including the GN&C plugin and any dynamically loaded plant model):
+(a) within the despawned vehicle's execution context (i.e., the set of host-managed
+threads, tasks, and callbacks that may execute code on behalf of that vehicle
+instance), no threads are executing code from that module's binary; (b) within the
+host's data structures for that vehicle instance (including any per-vehicle module
+handle tables, callback registries, thread entry points, and callback lists), the host
+retains no callable references (such as function pointers, callbacks, vtables, or
+handles) that would allow further execution of that module's code on behalf of the
+despawned vehicle; and (c) if no other active vehicle continues to use the module
+(i.e.,
+no other active vehicle retains callable references to it), its dynamic library has
+been unloaded by the host process. When a dynamically loaded module is shared among
+multiple active vehicles, the host shall ensure that the module is unloaded once it is
+no longer used by any vehicle (e.g., via reference-counting or an equivalent
+mechanism). Spawn and despawn requests shall be processed at tick boundaries (see
+SIM-SYS-062, Phase 1). All partitions within a tick shall observe the same set of
+active vehicles.
 
 **Rationale:** Dynamic vehicle lifecycle enables scenarios in which aircraft launch,
 complete their mission, and recover or are destroyed, without requiring a full simulation

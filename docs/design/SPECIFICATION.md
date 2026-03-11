@@ -66,8 +66,8 @@ operational mission data are outside the scope of this specification.
 
 | ID            | Title                                           | Location                                     |
 |---------------|-------------------------------------------------|----------------------------------------------|
-| FPA-SRS-000   | Fractal Partition Architecture Requirements     | `fractal/docs/design/SPECIFICATION.md`       |
-| FPA-CON-000   | Fractal Partition Architecture Conventions      | `fractal/docs/design/CONVENTIONS.md`         |
+| FPA-SRS-000   | Fractal Partition Architecture Requirements     | [simtheverse/fractal](https://github.com/simtheverse/fractal) `docs/design/SPECIFICATION.md` |
+| FPA-CON-000   | Fractal Partition Architecture Conventions      | [simtheverse/fractal](https://github.com/simtheverse/fractal) `docs/design/CONVENTIONS.md`   |
 | UNI-SRS-001   | Physics Partition Requirements                  | `sim-physics/docs/design/SPECIFICATION.md`   |
 | UNI-SRS-002   | GN&C Partition Requirements                     | `sim-gnc/docs/design/SPECIFICATION.md`       |
 | UNI-SRS-002A  | GN&C ABI Requirements                           | `sim-gnc-abi/docs/design/SPECIFICATION.md`   |

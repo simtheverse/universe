@@ -1,0 +1,9 @@
+[package]
+name = "universe-contract"
+description = "System-level contract crate for the universe flight simulation framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

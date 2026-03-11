@@ -5,7 +5,7 @@
 
 | Field         | Value                                      |
 |---------------|--------------------------------------------|
-| Document ID   | TF-SRS-005                                 |
+| Document ID   | UNI-SRS-005                                |
 | Version       | 0.1.0 (draft)                              |
 | Status        | Draft                                      |
 | Layer         | 0 — System (contract crate)                |
@@ -44,7 +44,7 @@ simulation lifecycle.
 
 ---
 
-### TF-005-001 — Execution State Type
+### UNI-005-001 — Execution State Type
 
 **Statement:** `universe-contract` shall export a type representing the simulation execution
 state with the following states and transitions:
@@ -77,13 +77,13 @@ cannot express transition validity.
 
 ---
 
-### TF-005-002 — Execution State Request Type
+### UNI-005-002 — Execution State Request Type
 
 **Statement:** `universe-contract` shall export a typed `ExecutionStateRequest` message carrying
 the requested transition and the identity of the requesting partition. Any partition
 shall request execution state transitions by emitting this message on its layer's bus.
 The orchestrator is the sole authority for evaluating and applying transitions according
-to the state machine defined in TF-005-001. At deeper layers, requests follow the
+to the state machine defined in UNI-005-001. At deeper layers, requests follow the
 compositor relay chain (FPA-010) to reach the orchestrator.
 
 Requests that represent invalid transitions shall be logged with the requesting
@@ -116,14 +116,14 @@ has full information (who requested what) for logging and conflict resolution.
 
 ---
 
-### TF-005-003 — Execution State Event Actions
+### UNI-005-003 — Execution State Event Actions
 
-**Statement:** `universe-contract` shall declare `"sim_pause"`, `"sim_stop"`, and `"sim_resume"`
-as event action identifiers in its contract-crate action vocabulary (FPA-029). When an
-event with one of these action identifiers fires, the event dispatcher shall emit the
-corresponding `ExecutionStateRequest` on the bus at the layer where the event is
-defined. These actions shall be usable with both time-triggered and condition-triggered
-events.
+**Statement:** `universe-contract` shall declare `"sim_start"`, `"sim_pause"`, `"sim_resume"`,
+`"sim_stop"`, and `"sim_reset"` as event action identifiers in its contract-crate action
+vocabulary (FPA-029). When an event with one of these action identifiers fires, the event
+dispatcher shall emit the corresponding `ExecutionStateRequest` on the bus at the layer
+where the event is defined. These actions shall be usable with both time-triggered and
+condition-triggered events.
 
 **Traces to:** UNI-025
 
@@ -131,7 +131,7 @@ events.
 actions keeps the logic declarative and configurable in composition fragments. Because
 every partition depends on `universe-contract`, these actions are available at every layer via the
 contract-crate dependency graph. Connecting the event system to the execution state
-request mechanism (TF-005-002) ensures all event-driven state changes flow through the
+request mechanism (UNI-005-002) ensures all event-driven state changes flow through the
 same arbitration path as UI-initiated changes.
 
 **Verification Expectations:**
@@ -141,6 +141,10 @@ same arbitration path as UI-initiated changes.
   the simulation to stop when the condition is met.
 - Pass: A system-level event with `action = "sim_resume"` and a time trigger resumes a
   paused simulation.
+- Pass: A system-level event with `action = "sim_start"` transitions the simulation from
+  Idle to Running.
+- Pass: A system-level event with `action = "sim_reset"` transitions the simulation from
+  Stopped to Idle.
 - Pass: The `ExecutionStateRequest` emitted by an event action is indistinguishable from
   one emitted by the UI or partition code directly.
 - Fail: Execution state event actions require source code modifications rather than
@@ -148,7 +152,7 @@ same arbitration path as UI-initiated changes.
 
 ---
 
-### TF-005-004 — Execution State Conflict Resolution
+### UNI-005-004 — Execution State Conflict Resolution
 
 **Statement:** When the orchestrator receives multiple `ExecutionStateRequest` messages
 within the same tick that request conflicting transitions, it shall apply the following
@@ -186,7 +190,7 @@ reproducible audit logs across deployment configurations.
 
 | ID          | Title                                            | Traces to     |
 |-------------|--------------------------------------------------|---------------|
-| TF-005-001  | Execution State Type                             | UNI-025       |
-| TF-005-002  | Execution State Request Type                     | UNI-025, UNI-016 |
-| TF-005-003  | Execution State Event Actions                    | UNI-025       |
-| TF-005-004  | Execution State Conflict Resolution              | UNI-025       |
+| UNI-005-001  | Execution State Type                             | UNI-025       |
+| UNI-005-002  | Execution State Request Type                     | UNI-025, UNI-016 |
+| UNI-005-003  | Execution State Event Actions                    | UNI-025       |
+| UNI-005-004  | Execution State Conflict Resolution              | UNI-025       |

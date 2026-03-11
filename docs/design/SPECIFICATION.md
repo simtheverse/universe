@@ -54,7 +54,7 @@ identifier(s) from this document that each child requirement satisfies.
 behavioral and structural contracts without prescribing implementation technology.
 References to specific tools, languages, and frameworks — including Rust, Bevy, TOML,
 Cargo, and `egui` — are illustrative examples of one viable realization and shall not be
-read as mandating those choices. An conforming implementation may substitute equivalent
+read as mandating those choices. A conforming implementation may substitute equivalent
 technologies provided all stated behavioral and structural requirements are satisfied.
 
 **Out of scope:** Specific aerodynamic databases, certified flight models, and
@@ -68,13 +68,13 @@ operational mission data are outside the scope of this specification.
 |---------------|-------------------------------------------------|----------------------------------------------|
 | FPA-SRS-000   | Fractal Partition Architecture Requirements     | `fractal/docs/design/SPECIFICATION.md`       |
 | FPA-CON-000   | Fractal Partition Architecture Conventions      | `fractal/docs/design/CONVENTIONS.md`         |
-| TF-SRS-001    | Physics Partition Requirements                  | `sim-physics/docs/design/SPECIFICATION.md`   |
-| TF-SRS-002    | GN&C Partition Requirements                     | `sim-gnc/docs/design/SPECIFICATION.md`       |
-| TF-SRS-002A   | GN&C ABI Requirements                           | `sim-gnc-abi/docs/design/SPECIFICATION.md`   |
-| TF-SRS-003    | Visualization Partition Requirements            | `sim-viz/docs/design/SPECIFICATION.md`       |
-| TF-SRS-004    | User Interface Partition Requirements           | `sim-ui/docs/design/SPECIFICATION.md`        |
-| TF-SRS-005    | Contract Crate Interface Specification (ICD)    | `universe-contract/docs/design/SPECIFICATION.md` |
-| TF-SRS-006    | Application Requirements                        | `sim-app/docs/design/SPECIFICATION.md`       |
+| UNI-SRS-001   | Physics Partition Requirements                  | `sim-physics/docs/design/SPECIFICATION.md`   |
+| UNI-SRS-002   | GN&C Partition Requirements                     | `sim-gnc/docs/design/SPECIFICATION.md`       |
+| UNI-SRS-002A  | GN&C ABI Requirements                           | `sim-gnc-abi/docs/design/SPECIFICATION.md`   |
+| UNI-SRS-003   | Visualization Partition Requirements            | `sim-viz/docs/design/SPECIFICATION.md`       |
+| UNI-SRS-004   | User Interface Partition Requirements           | `sim-ui/docs/design/SPECIFICATION.md`        |
+| UNI-SRS-005   | Contract Crate Interface Specification (ICD)    | `universe-contract/docs/design/SPECIFICATION.md` |
+| UNI-SRS-006   | Application Requirements                        | `sim-app/docs/design/SPECIFICATION.md`       |
 
 ---
 
@@ -771,7 +771,7 @@ state transitions shall be available as event actions (FPA-029) so that pause po
 safety stops, and phase transitions can be expressed declaratively in composition
 fragments. The detailed interface — states, transitions, request types, event action
 identifiers, and conflict resolution policy — shall be specified in the `universe-contract`
-interface specification (TF-SRS-005).
+interface specification (UNI-SRS-005).
 
 **Rationale:** Interactive flight simulation requires all four partitions to agree on
 whether the simulation is running, paused, or stopped. Multiple sources — UI controls,
@@ -830,29 +830,29 @@ continuing in a degraded state that may produce subtly incorrect results.
 
 | ID       | Title                              | Allocated To              | Traces to FPA             |
 |----------|------------------------------------|---------------------------|---------------------------|
-| UNI-001  | Four-partition Architecture        | TF-SRS-005, TF-SRS-006   | FPA-001                   |
-| UNI-002  | Multi-vehicle Support              | TF-SRS-006                | —                         |
-| UNI-003  | Vehicle Identification             | TF-SRS-005                | —                         |
-| UNI-004  | World State Broadcast              | TF-SRS-005                | FPA-004, FPA-014          |
-| UNI-005  | Dynamic Vehicle Lifecycle          | TF-SRS-006                | FPA-014                   |
-| UNI-006  | Physics Sub-model Composition      | TF-SRS-001                | FPA-001, FPA-021          |
-| UNI-007  | Environment Model Composability    | TF-SRS-001                | FPA-001                   |
-| UNI-008  | Configurable Simulation Rate       | TF-SRS-001, TF-SRS-006   | —                         |
-| UNI-009  | Stable GN&C ABI                    | TF-SRS-002A               | —                         |
-| UNI-010  | GN&C Plugin Isolation              | TF-SRS-002A               | —                         |
-| UNI-011  | GN&C Peer State Access             | TF-SRS-002A               | —                         |
-| UNI-012  | Vehicle Manifest                   | TF-SRS-005, TF-SRS-006   | —                         |
-| UNI-013  | Visual Plant State Interface       | TF-SRS-001, TF-SRS-003   | —                         |
-| UNI-014  | Visualization Modularity           | TF-SRS-003                | FPA-001                   |
-| UNI-015  | Bevy ECS Ownership of Visualization and UI | TF-SRS-003, TF-SRS-004 | —                    |
-| UNI-016  | UI Execution Control               | TF-SRS-004                | FPA-006                   |
-| UNI-017  | UI Extensibility                   | TF-SRS-004                | FPA-001                   |
-| UNI-018  | Implementation Language            | TF-SRS-001 through 006    | —                         |
-| UNI-019  | Crate Publishability               | TF-SRS-006                | —                         |
-| UNI-020  | Independent GN&C ABI Versioning    | TF-SRS-002A               | —                         |
-| UNI-021  | Headless Feature Flag              | TF-SRS-006                | —                         |
-| UNI-022  | Embedding Interface                | TF-SRS-006                | —                         |
-| UNI-023  | Telemetry Recording                | TF-SRS-004                | —                         |
-| UNI-024  | Telemetry Playback                 | TF-SRS-003, TF-SRS-004   | —                         |
-| UNI-025  | Simulation Lifecycle State Machine | TF-SRS-005, TF-SRS-006   | FPA-006, FPA-029          |
-| UNI-026  | Fail-fast Fault Handling           | TF-SRS-006                | FPA-011                   |
+| UNI-001  | Four-partition Architecture        | UNI-SRS-005, UNI-SRS-006   | FPA-001                   |
+| UNI-002  | Multi-vehicle Support              | UNI-SRS-006                | —                         |
+| UNI-003  | Vehicle Identification             | UNI-SRS-005                | —                         |
+| UNI-004  | World State Broadcast              | UNI-SRS-005                | FPA-004, FPA-014          |
+| UNI-005  | Dynamic Vehicle Lifecycle          | UNI-SRS-006                | FPA-014                   |
+| UNI-006  | Physics Sub-model Composition      | UNI-SRS-001                | FPA-001, FPA-021          |
+| UNI-007  | Environment Model Composability    | UNI-SRS-001                | FPA-001                   |
+| UNI-008  | Configurable Simulation Rate       | UNI-SRS-001, UNI-SRS-006   | —                         |
+| UNI-009  | Stable GN&C ABI                    | UNI-SRS-002A               | —                         |
+| UNI-010  | GN&C Plugin Isolation              | UNI-SRS-002A               | —                         |
+| UNI-011  | GN&C Peer State Access             | UNI-SRS-002A               | —                         |
+| UNI-012  | Vehicle Manifest                   | UNI-SRS-005, UNI-SRS-006   | —                         |
+| UNI-013  | Visual Plant State Interface       | UNI-SRS-001, UNI-SRS-003   | —                         |
+| UNI-014  | Visualization Modularity           | UNI-SRS-003                | FPA-001                   |
+| UNI-015  | Bevy ECS Ownership of Visualization and UI | UNI-SRS-003, UNI-SRS-004 | —                    |
+| UNI-016  | UI Execution Control               | UNI-SRS-004                | FPA-006                   |
+| UNI-017  | UI Extensibility                   | UNI-SRS-004                | FPA-001                   |
+| UNI-018  | Implementation Language            | UNI-SRS-001 through 006    | —                         |
+| UNI-019  | Crate Publishability               | UNI-SRS-006                | —                         |
+| UNI-020  | Independent GN&C ABI Versioning    | UNI-SRS-002A               | —                         |
+| UNI-021  | Headless Feature Flag              | UNI-SRS-006                | —                         |
+| UNI-022  | Embedding Interface                | UNI-SRS-006                | —                         |
+| UNI-023  | Telemetry Recording                | UNI-SRS-004                | —                         |
+| UNI-024  | Telemetry Playback                 | UNI-SRS-003, UNI-SRS-004   | —                         |
+| UNI-025  | Simulation Lifecycle State Machine | UNI-SRS-005, UNI-SRS-006   | FPA-006, FPA-029          |
+| UNI-026  | Fail-fast Fault Handling           | UNI-SRS-006                | FPA-011                   |

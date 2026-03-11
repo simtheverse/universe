@@ -68,13 +68,13 @@ operational mission data are outside the scope of this specification.
 |---------------|-------------------------------------------------|----------------------------------------------|
 | FPA-SRS-000   | Fractal Partition Architecture Requirements     | [simtheverse/fractal](https://github.com/simtheverse/fractal) `docs/design/SPECIFICATION.md` |
 | FPA-CON-000   | Fractal Partition Architecture Conventions      | [simtheverse/fractal](https://github.com/simtheverse/fractal) `docs/design/CONVENTIONS.md`   |
-| UNI-SRS-001   | Physics Partition Requirements                  | `sim-physics/docs/design/SPECIFICATION.md`   |
-| UNI-SRS-002   | GN&C Partition Requirements                     | `sim-gnc/docs/design/SPECIFICATION.md`       |
-| UNI-SRS-002A  | GN&C ABI Requirements                           | `sim-gnc-abi/docs/design/SPECIFICATION.md`   |
-| UNI-SRS-003   | Visualization Partition Requirements            | `sim-viz/docs/design/SPECIFICATION.md`       |
-| UNI-SRS-004   | User Interface Partition Requirements           | `sim-ui/docs/design/SPECIFICATION.md`        |
+| UNI-SRS-001   | Physics Partition Requirements                  | TBD                                          |
+| UNI-SRS-002   | GN&C Partition Requirements                     | TBD                                          |
+| UNI-SRS-002A  | GN&C ABI Requirements                           | TBD                                          |
+| UNI-SRS-003   | Visualization Partition Requirements            | TBD                                          |
+| UNI-SRS-004   | User Interface Partition Requirements           | TBD                                          |
 | UNI-SRS-005   | Contract Crate Interface Specification (ICD)    | `universe-contract/docs/design/SPECIFICATION.md` |
-| UNI-SRS-006   | Application Requirements                        | `sim-app/docs/design/SPECIFICATION.md`       |
+| UNI-SRS-006   | Application Requirements                        | TBD                                          |
 
 ---
 

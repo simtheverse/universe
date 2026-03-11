@@ -28,7 +28,8 @@
 10. [User Interface](#10-user-interface)
 11. [Distribution and Packaging](#11-distribution-and-packaging)
 12. [Telemetry](#12-telemetry)
-13. [Requirements Traceability Matrix](#13-requirements-traceability-matrix)
+13. [Execution Lifecycle](#13-execution-lifecycle)
+14. [Requirements Traceability Matrix](#14-requirements-traceability-matrix)
 
 ---
 
@@ -66,12 +67,13 @@ operational mission data are outside the scope of this specification.
 | ID            | Title                                           | Location                                     |
 |---------------|-------------------------------------------------|----------------------------------------------|
 | FPA-SRS-000   | Fractal Partition Architecture Requirements     | `fractal/docs/design/SPECIFICATION.md`       |
+| FPA-CON-000   | Fractal Partition Architecture Conventions      | `fractal/docs/design/CONVENTIONS.md`         |
 | TF-SRS-001    | Physics Partition Requirements                  | `sim-physics/docs/design/SPECIFICATION.md`   |
 | TF-SRS-002    | GN&C Partition Requirements                     | `sim-gnc/docs/design/SPECIFICATION.md`       |
 | TF-SRS-002A   | GN&C ABI Requirements                           | `sim-gnc-abi/docs/design/SPECIFICATION.md`   |
 | TF-SRS-003    | Visualization Partition Requirements            | `sim-viz/docs/design/SPECIFICATION.md`       |
 | TF-SRS-004    | User Interface Partition Requirements           | `sim-ui/docs/design/SPECIFICATION.md`        |
-| TF-SRS-005    | Core Interface Requirements                     | `sim-core/docs/design/SPECIFICATION.md`      |
+| TF-SRS-005    | Contract Crate Interface Specification (ICD)    | `universe-contract/docs/design/SPECIFICATION.md` |
 | TF-SRS-006    | Application Requirements                        | `sim-app/docs/design/SPECIFICATION.md`       |
 
 ---
@@ -172,7 +174,7 @@ content, which is fragile.
   distinguishable solely by `VehicleId` without examining any state field values.
 - Pass: The `VehicleId` carried on a `PlantState` message matches the `VehicleId` of the
   Bevy entity created for that vehicle.
-- Fail: Any inter-partition message type defined in `sim-core` that pertains to a
+- Fail: Any inter-partition message type defined in `universe-contract` that pertains to a
   specific vehicle lacks a `VehicleId` field.
 - Fail: Two active vehicles share the same `VehicleId` at any point during a simulation
   run.
@@ -390,7 +392,7 @@ integrates correctly without environment-specific dependency resolution.
   a loadable shared library and executes correctly in the simulator.
 - Pass: The plugin receives own vehicle state and world state entirely through its ABI
   function parameters without calling back into the simulator.
-- Fail: The plugin requires a `bevy`, `sim-core`, `sim-physics`, or `tokio` dependency
+- Fail: The plugin requires a `bevy`, `universe-contract`, `sim-physics`, or `tokio` dependency
   to compile.
 
 ---
@@ -448,7 +450,7 @@ configuration fragmentation across multiple files.
 ### UNI-013 — Visual Plant State Interface
 
 **Statement:** The physics plant model shall implement a `VizStateProvider` trait
-defined in `sim-core`, producing a `VehiclePlantVizState` message each tick containing
+defined in `universe-contract`, producing a `VehiclePlantVizState` message each tick containing
 vehicle-type-specific visual state (e.g., control surface deflection angles, gear
 position, rotor RPM). This message shall be published on the bus and mirrored into a
 Bevy component for use by the visualization partition.
@@ -532,7 +534,7 @@ minimum the following simulation lifecycle operations: start, pause, resume, sto
 reset to initial conditions. These controls shall emit `ExecutionStateRequest` messages
 on the simulation bus. The UI is one of potentially many sources of execution state
 transition requests; the orchestrator (`sim-app`) is the sole authority for evaluating
-and applying transitions (see FPA-016).
+and applying transitions (see UNI-025).
 
 **Rationale:** Execution control is the minimum viable interactive capability. Without
 it, the simulator cannot be used in classroom or training contexts where an instructor
@@ -609,13 +611,13 @@ preserves the flexibility for students to submit implementations in C, C++, Pyth
 ### UNI-019 — Crate Publishability
 
 **Statement:** The following crates shall be publishable to crates.io or a compatible
-Cargo registry: `sim-core`, `sim-gnc-abi`, `sim-physics`, `sim-gnc`, `sim-viz`,
+Cargo registry: `universe-contract`, `sim-gnc-abi`, `sim-physics`, `sim-gnc`, `sim-viz`,
 `sim-ui`, and `universe`. The `sim-app` binary target shall be published as part of
 the `universe` crate. Internal tooling and scenario runners not intended for external
 use shall set `publish = false`.
 
 **Rationale:** Publishing partition crates independently allows other laboratories to
-take a dependency on specific partitions (e.g., `sim-core` for interface compatibility,
+take a dependency on specific partitions (e.g., `universe-contract` for interface compatibility,
 `sim-gnc-abi` for student submissions) without depending on the full framework. Publishing
 `universe` allows the complete simulator to be embedded in third-party applications.
 
@@ -646,7 +648,7 @@ pin a stable version for the duration of an assignment.
   in a simulator linked against `sim-gnc-abi` version 1.x.y for any x and y.
 - Pass: A change to any `#[repr(C)]` struct field in `sim-gnc-abi` is accompanied by a
   major version increment.
-- Fail: The `sim-gnc-abi` version is updated in lockstep with `sim-core` or `sim-physics`
+- Fail: The `sim-gnc-abi` version is updated in lockstep with `universe-contract` or `sim-physics`
   for releases that do not affect the ABI.
 
 ---
@@ -697,7 +699,7 @@ invocation.
 - Pass: Universe's library interface accepts a session fragment, executes the session,
   and returns control to the caller without retaining ownership of the process lifecycle.
 - Pass: Universe's library interface is usable with only `universe` as a dependency;
-  internal partition crates (`sim-core`, `sim-physics`, `sim-gnc`, `sim-viz`, `sim-ui`)
+  internal partition crates (`universe-contract`, `sim-physics`, `sim-gnc`, `sim-viz`, `sim-ui`)
   are not required by callers.
 - Pass: Universe's library interface does not require callers to initialize
   framework-specific infrastructure (e.g., an ECS world, a rendering context) that
@@ -755,7 +757,76 @@ visualization stack ensures that recorded and live views are visually consistent
 
 ---
 
-## 13. Requirements Traceability Matrix
+## 13. Execution Lifecycle
+
+---
+
+### UNI-025 — Simulation Lifecycle State Machine
+
+**Statement:** The system-level contract crate (`universe-contract`) shall define a shared state
+machine (FPA-006) for simulation lifecycle control with at minimum start, pause, resume,
+stop, and reset semantics. The state machine shall be observable by all partitions and
+modifiable only through typed bus requests arbitrated by the orchestrator. Execution
+state transitions shall be available as event actions (FPA-029) so that pause points,
+safety stops, and phase transitions can be expressed declaratively in composition
+fragments. The detailed interface — states, transitions, request types, event action
+identifiers, and conflict resolution policy — shall be specified in the `universe-contract`
+interface specification (TF-SRS-005).
+
+**Rationale:** Interactive flight simulation requires all four partitions to agree on
+whether the simulation is running, paused, or stopped. Multiple sources — UI controls,
+scripted events, limit exceedance handlers — may request transitions simultaneously.
+Defining the lifecycle as a shared state machine (FPA-006) ensures that transitions are
+arbitrated through a single owner, that all partitions observe a consistent state, and
+that the mechanism follows the same pattern available at every layer. Deferring the
+detailed interface to `universe-contract`'s specification keeps this document functional rather
+than prescriptive — a reimplementation of `universe-contract` may define different states or
+conflict rules provided it satisfies the lifecycle semantics required here.
+
+**Verification Expectations:**
+- Pass: `universe-contract` exports a simulation lifecycle state machine with start, pause,
+  resume, stop, and reset operations, implemented using the shared state machine
+  synchronization pattern (FPA-006).
+- Pass: All four partitions observe the same execution state value; no partition
+  maintains a private copy.
+- Pass: A partition requesting a lifecycle transition emits a typed request on the bus;
+  the orchestrator arbitrates and applies or rejects it within one tick.
+- Pass: Lifecycle transitions are available as event actions usable in composition
+  fragments with both time-triggered and condition-triggered events.
+- Fail: Execution state is modified by direct mutation rather than bus-mediated requests.
+- Fail: Lifecycle transition actions require partition source code modifications rather
+  than configuration.
+
+---
+
+### UNI-026 — Fail-fast Fault Handling
+
+**Statement:** The system shall not configure fallback implementations for any
+partition. When any partition faults during execution, the error shall propagate through
+the compositor chain (FPA-011) to the orchestrator, which shall stop the simulation run
+with a diagnostic identifying the faulting partition, its layer depth, and the operation
+that faulted.
+
+**Rationale:** Universe is a teaching and development platform. Hiding failures behind
+fallback implementations would obscure bugs that students and developers need to see.
+FPA-011 permits fallback as an architectural option; universe chooses fail-fast as a
+domain policy. A structural failure, a panicking GN&C plugin, or a physics sub-model
+error should halt the simulation immediately with a clear diagnostic rather than
+continuing in a degraded state that may produce subtly incorrect results.
+
+**Verification Expectations:**
+- Pass: A partition returning an error from `step()` causes the orchestrator to stop the
+  run with a diagnostic identifying the faulting partition.
+- Pass: A sub-partition panicking during execution causes the compositor to catch the
+  panic, wrap it with context, and propagate it to the orchestrator.
+- Pass: No composition fragment in the default configuration specifies a fallback
+  implementation for any partition.
+- Fail: A partition fault is absorbed and the simulation continues with missing or
+  degraded output.
+
+---
+
+## 14. Requirements Traceability Matrix
 
 | ID       | Title                              | Allocated To              | Traces to FPA             |
 |----------|------------------------------------|---------------------------|---------------------------|
@@ -774,7 +845,7 @@ visualization stack ensures that recorded and live views are visually consistent
 | UNI-013  | Visual Plant State Interface       | TF-SRS-001, TF-SRS-003   | —                         |
 | UNI-014  | Visualization Modularity           | TF-SRS-003                | FPA-001                   |
 | UNI-015  | Bevy ECS Ownership of Visualization and UI | TF-SRS-003, TF-SRS-004 | —                    |
-| UNI-016  | UI Execution Control               | TF-SRS-004                | FPA-016                   |
+| UNI-016  | UI Execution Control               | TF-SRS-004                | FPA-006                   |
 | UNI-017  | UI Extensibility                   | TF-SRS-004                | FPA-001                   |
 | UNI-018  | Implementation Language            | TF-SRS-001 through 006    | —                         |
 | UNI-019  | Crate Publishability               | TF-SRS-006                | —                         |
@@ -783,3 +854,5 @@ visualization stack ensures that recorded and live views are visually consistent
 | UNI-022  | Embedding Interface                | TF-SRS-006                | —                         |
 | UNI-023  | Telemetry Recording                | TF-SRS-004                | —                         |
 | UNI-024  | Telemetry Playback                 | TF-SRS-003, TF-SRS-004   | —                         |
+| UNI-025  | Simulation Lifecycle State Machine | TF-SRS-005, TF-SRS-006   | FPA-006, FPA-029          |
+| UNI-026  | Fail-fast Fault Handling           | TF-SRS-006                | FPA-011                   |
